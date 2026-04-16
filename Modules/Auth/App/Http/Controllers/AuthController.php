@@ -2,13 +2,13 @@
 
 namespace Modules\Auth\App\Http\Controllers;
 
-use App\Http\Controllers\Controller;
+use App\Http\Controllers\BaseApiController;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 
-class AuthController extends Controller
+class AuthController extends BaseApiController
 {
     public function login(Request $request): JsonResponse
     {
@@ -26,26 +26,18 @@ class AuthController extends Controller
             ->first();
 
         if (!$user || !Hash::check($password, (string) $user->password)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Invalid credentials.',
-                'data' => (object) [],
-            ], 401);
+            return $this->errorResponse('api.auth.invalid_credentials', 401, (object) []);
         }
 
         $token = $user->createToken('api')->plainTextToken;
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Login successful.',
-            'data' => [
-                'token' => $token,
-                'user' => [
-                    'id' => $user->id,
-                    'name' => $user->name,
-                    'email' => $user->email,
-                    'phone' => $user->phone ?? null,
-                ],
+        return $this->successResponse('api.auth.login_success', [
+            'token' => $token,
+            'user' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'phone' => $user->phone ?? null,
             ],
         ]);
     }
@@ -58,11 +50,7 @@ class AuthController extends Controller
             $user->currentAccessToken()->delete();
         }
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Logout successful.',
-            'data' => (object) [],
-        ]);
+        return $this->successResponse('api.auth.logout_success', (object) []);
     }
 }
 

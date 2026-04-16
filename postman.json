@@ -81,6 +81,12 @@
                   "});",
                   "",
                   "var res = pm.response.json();",
+                  "pm.test('Response has common wrapper', function () {",
+                  "    pm.expect(res).to.have.property('success', true);",
+                  "    pm.expect(res).to.have.property('message');",
+                  "    pm.expect(res).to.have.property('data');",
+                  "});",
+                  "",
                   "var token = res && res.data ? res.data.token : null;",
                   "",
                   "pm.test('Token exists', function () {",
@@ -138,6 +144,13 @@
                   "    pm.response.to.have.status(200);",
                   "});",
                   "",
+                  "var res = pm.response.json();",
+                  "pm.test('Response has common wrapper', function () {",
+                  "    pm.expect(res).to.have.property('success', true);",
+                  "    pm.expect(res).to.have.property('message');",
+                  "    pm.expect(res).to.have.property('data');",
+                  "});",
+                  "",
                   "pm.collectionVariables.unset('token');"
                 ]
               }
@@ -161,6 +174,112 @@
       "description": "Basic endpoints mapped from OrderController methods (show/store/update).",
       "item": [
         {
+          "name": "List My Orders",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('List orders status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Response has common wrapper', function () {",
+                  "    pm.expect(res).to.have.property('success', true);",
+                  "    pm.expect(res).to.have.property('message');",
+                  "    pm.expect(res).to.have.property('data');",
+                  "});",
+                  "",
+                  "pm.test('Contains orders array', function () {",
+                  "    pm.expect(res.data).to.have.property('orders');",
+                  "    pm.expect(res.data.orders).to.be.an('array');",
+                  "});",
+                  "",
+                  "if (res.data.orders && res.data.orders.length) {",
+                  "    pm.test('Order row has Vietnamese status label', function () {",
+                  "        var o = res.data.orders[0];",
+                  "        pm.expect(o).to.have.property('order_label_status');",
+                  "        pm.expect(o.order_label_status).to.be.a('string');",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Order Metadata",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders/create",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "create"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Create metadata status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Response has common wrapper', function () {",
+                  "    pm.expect(res).to.have.property('success', true);",
+                  "    pm.expect(res).to.have.property('message');",
+                  "    pm.expect(res).to.have.property('data');",
+                  "});",
+                  "",
+                  "pm.test('Contains products/provinces/wards', function () {",
+                  "    pm.expect(res.data).to.have.property('products');",
+                  "    pm.expect(res.data).to.have.property('provinces');",
+                  "    pm.expect(res.data).to.have.property('wards');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Show Order",
           "request": {
             "method": "GET",
@@ -182,7 +301,26 @@
                 "{{order_id}}"
               ]
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Show order status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Response has order_label_status', function () {",
+                  "    pm.expect(res.data).to.have.property('order_label_status');",
+                  "    pm.expect(res.data.order_label_status).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Store Order",
@@ -197,11 +335,6 @@
             "body": {
               "mode": "formdata",
               "formdata": [
-                {
-                  "key": "order_no",
-                  "value": "ORD-20260416-001",
-                  "type": "text"
-                },
                 {
                   "key": "order_date",
                   "value": "2026-04-16",
@@ -224,7 +357,7 @@
                 },
                 {
                   "key": "order_status",
-                  "value": "pending",
+                  "value": "new",
                   "type": "text"
                 },
                 {
@@ -275,7 +408,30 @@
                 "orders"
               ]
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Store order status is 201', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Response has order_label_status', function () {",
+                  "    pm.expect(res.data).to.have.property('order_label_status');",
+                  "    pm.expect(res.data.order_label_status).to.be.a('string');",
+                  "});",
+                  "",
+                  "if (res && res.data && res.data.id) {",
+                  "    pm.collectionVariables.set('order_id', String(res.data.id));",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Update Order",
@@ -312,7 +468,7 @@
                 },
                 {
                   "key": "order_status",
-                  "value": "pending",
+                  "value": "new",
                   "type": "text"
                 },
                 {
@@ -364,7 +520,92 @@
                 "{{order_id}}"
               ]
             }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Update order status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Response has order_label_status', function () {",
+                  "    pm.expect(res.data).to.have.property('order_label_status');",
+                  "    pm.expect(res.data.order_label_status).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Agent",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
           }
+        ]
+      },
+      "item": [
+        {
+          "name": "List Child Agents",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/agents/children",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "agents",
+                "children"
+              ]
+            },
+            "description": "Agents where parent_agent_id = logged-in user's agent id. Optional: ?agent_type_id= to filter by child agent_type_id."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Child agents status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Response has common wrapper', function () {",
+                  "    pm.expect(res).to.have.property('success', true);",
+                  "    pm.expect(res).to.have.property('message');",
+                  "    pm.expect(res).to.have.property('data');",
+                  "});",
+                  "",
+                  "pm.test('Has parent_agent and agents', function () {",
+                  "    pm.expect(res.data).to.have.property('parent_agent');",
+                  "    pm.expect(res.data).to.have.property('agents');",
+                  "    pm.expect(res.data.agents).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     }

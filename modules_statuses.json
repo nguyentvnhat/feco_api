@@ -1,4 +1,5 @@
 {
     "Order": true,
-    "Auth": true
+    "Auth": true,
+    "Agent": true
 }

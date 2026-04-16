@@ -2,7 +2,7 @@
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
-use Modules\Order\App\Http\Controllers\OrderController;
+use Modules\Agent\App\Http\Controllers\ChildAgentController;
 
 /*
     |--------------------------------------------------------------------------
@@ -16,9 +16,7 @@ use Modules\Order\App\Http\Controllers\OrderController;
 */
 
 Route::middleware(['auth:sanctum'])->prefix('v1')->name('api.')->group(function () {
-    Route::get('orders', [OrderController::class, 'index'])->name('orders.index');
-    Route::get('orders/create', [OrderController::class, 'create'])->name('orders.create');
-    Route::get('orders/{order}', [OrderController::class, 'show'])->name('orders.show');
-    Route::post('orders', [OrderController::class, 'store'])->name('orders.store');
-    Route::put('orders/{order}', [OrderController::class, 'update'])->name('orders.update');
+    Route::get('agent', fn (Request $request) => $request->user())->name('agent');
+
+    Route::get('agents/children', [ChildAgentController::class, 'index'])->name('agents.children');
 });
