@@ -2,7 +2,7 @@
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
-use Modules\Auth\App\Http\Controllers\AuthController;
+use Modules\Order\App\Http\Controllers\OrderController;
 
 /*
     |--------------------------------------------------------------------------
@@ -15,12 +15,8 @@ use Modules\Auth\App\Http\Controllers\AuthController;
     |
 */
 
-// Route::middleware(['auth:sanctum'])->prefix('v1')->name('api.')->group(function () {
-//     Route::get('auth', fn (Request $request) => $request->user())->name('auth');
-// });
-
-Route::prefix('v1/auth')->group(function () {
-    Route::post('/login', [AuthController::class, 'login']);
-    Route::post('/logout', [AuthController::class, 'logout'])->middleware('auth:sanctum');
+Route::middleware(['auth:sanctum'])->prefix('v1')->name('api.')->group(function () {
+    Route::get('orders/{order}', [OrderController::class, 'show'])->name('orders.show');
+    Route::post('orders', [OrderController::class, 'store'])->name('orders.store');
+    Route::put('orders/{order}', [OrderController::class, 'update'])->name('orders.update');
 });
-

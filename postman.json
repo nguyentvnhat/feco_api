@@ -1,0 +1,372 @@
+{
+  "info": {
+    "_postman_id": "d7edfa50-d1a6-45b5-93cf-8d2441fb9f43",
+    "name": "feco_api - Auth & Order Basic",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Basic Postman collection for Auth and Order APIs with token automation."
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000"
+    },
+    {
+      "key": "login",
+      "value": "admin@example.com"
+    },
+    {
+      "key": "password",
+      "value": "secret"
+    },
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "order_id",
+      "value": "1"
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "login",
+                  "value": "{{login}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{password}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Login via phone/email and save Sanctum token."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Login status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "var token = res && res.data ? res.data.token : null;",
+                  "",
+                  "pm.test('Token exists', function () {",
+                  "    pm.expect(token).to.be.a('string').and.not.empty;",
+                  "});",
+                  "",
+                  "if (token) {",
+                  "    pm.collectionVariables.set('token', token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/logout",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "logout"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Logout status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.collectionVariables.unset('token');"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Order",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "description": "Basic endpoints mapped from OrderController methods (show/store/update).",
+      "item": [
+        {
+          "name": "Show Order",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders/{{order_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{order_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Store Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "order_no",
+                  "value": "ORD-20260416-001",
+                  "type": "text"
+                },
+                {
+                  "key": "order_date",
+                  "value": "2026-04-16",
+                  "type": "text"
+                },
+                {
+                  "key": "seller_user_id",
+                  "value": "1",
+                  "type": "text"
+                },
+                {
+                  "key": "agent_profile_id",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "order_channel",
+                  "value": "direct_sale",
+                  "type": "text"
+                },
+                {
+                  "key": "order_status",
+                  "value": "pending",
+                  "type": "text"
+                },
+                {
+                  "key": "customer_name",
+                  "value": "Nguyen Van A",
+                  "type": "text"
+                },
+                {
+                  "key": "customer_phone",
+                  "value": "0900000000",
+                  "type": "text"
+                },
+                {
+                  "key": "customer_address",
+                  "value": "123 Duong ABC",
+                  "type": "text"
+                },
+                {
+                  "key": "customer_province_code",
+                  "value": "01",
+                  "type": "text"
+                },
+                {
+                  "key": "customer_district_code",
+                  "value": "001",
+                  "type": "text"
+                },
+                {
+                  "key": "customer_district_name",
+                  "value": "Quan 1",
+                  "type": "text"
+                },
+                {
+                  "key": "customer_ward_code",
+                  "value": "00001",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Order",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "order_date",
+                  "value": "2026-04-16",
+                  "type": "text"
+                },
+                {
+                  "key": "seller_user_id",
+                  "value": "1",
+                  "type": "text"
+                },
+                {
+                  "key": "agent_profile_id",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "order_channel",
+                  "value": "direct_sale",
+                  "type": "text"
+                },
+                {
+                  "key": "order_status",
+                  "value": "pending",
+                  "type": "text"
+                },
+                {
+                  "key": "customer_name",
+                  "value": "Nguyen Van A",
+                  "type": "text"
+                },
+                {
+                  "key": "customer_phone",
+                  "value": "0900000000",
+                  "type": "text"
+                },
+                {
+                  "key": "customer_address",
+                  "value": "123 Duong XYZ",
+                  "type": "text"
+                },
+                {
+                  "key": "customer_province_code",
+                  "value": "01",
+                  "type": "text"
+                },
+                {
+                  "key": "customer_district_code",
+                  "value": "001",
+                  "type": "text"
+                },
+                {
+                  "key": "customer_district_name",
+                  "value": "Quan 1",
+                  "type": "text"
+                },
+                {
+                  "key": "customer_ward_code",
+                  "value": "00001",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders/{{order_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{order_id}}"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
