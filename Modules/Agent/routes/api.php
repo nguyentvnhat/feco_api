@@ -2,7 +2,7 @@
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
-use Modules\Auth\App\Http\Controllers\AuthController;
+use Modules\Agent\App\Http\Controllers\ChildAgentController;
 
 /*
     |--------------------------------------------------------------------------
@@ -15,12 +15,8 @@ use Modules\Auth\App\Http\Controllers\AuthController;
     |
 */
 
-// Route::middleware(['auth:sanctum'])->prefix('v1')->name('api.')->group(function () {
-//     Route::get('auth', fn (Request $request) => $request->user())->name('auth');
-// });
+Route::middleware(['auth:sanctum'])->prefix('v1')->name('api.')->group(function () {
+    Route::get('agent', fn (Request $request) => $request->user())->name('agent');
 
-Route::prefix('v1/auth')->group(function () {
-    Route::post('/login', [AuthController::class, 'login']);
-    Route::post('/logout', [AuthController::class, 'logout'])->middleware('auth:sanctum');
+    Route::get('agents/children', [ChildAgentController::class, 'index'])->name('agents.children');
 });
-

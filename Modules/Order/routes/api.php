@@ -1,0 +1,24 @@
+<?php
+
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
+use Modules\Order\App\Http\Controllers\OrderController;
+
+/*
+    |--------------------------------------------------------------------------
+    | API Routes
+    |--------------------------------------------------------------------------
+    |
+    | Here is where you can register API routes for your application. These
+    | routes are loaded by the RouteServiceProvider within a group which
+    | is assigned the "api" middleware group. Enjoy building your API!
+    |
+*/
+
+Route::middleware(['auth:sanctum'])->prefix('v1')->name('api.')->group(function () {
+    Route::get('orders', [OrderController::class, 'index'])->name('orders.index');
+    Route::get('orders/create', [OrderController::class, 'create'])->name('orders.create');
+    Route::get('orders/{order}', [OrderController::class, 'show'])->name('orders.show');
+    Route::post('orders', [OrderController::class, 'store'])->name('orders.store');
+    Route::put('orders/{order}', [OrderController::class, 'update'])->name('orders.update');
+});
