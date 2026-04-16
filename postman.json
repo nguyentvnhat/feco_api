@@ -349,62 +349,74 @@
                 {
                   "key": "order_date",
                   "value": "2026-04-16",
-                  "type": "text"
+                  "type": "text",
+                  "description": "required | Ngay dat don, dinh dang YYYY-MM-DD"
                 },
                 {
                   "key": "seller_user_id",
                   "value": "1",
-                  "type": "text"
+                  "type": "text",
+                  "description": "required | ID user ban hang (exists: users.id)"
                 },
                 {
                   "key": "agent_profile_id",
                   "value": "",
-                  "type": "text"
+                  "type": "text",
+                  "description": "optional | ID ho so dai ly (exists: agent_profiles.id)"
                 },
                 {
                   "key": "order_channel",
                   "value": "direct_sale",
-                  "type": "text"
+                  "type": "text",
+                  "description": "required | agent_order | direct_sale | internal_sale"
                 },
                 {
                   "key": "order_status",
                   "value": "new",
-                  "type": "text"
+                  "type": "text",
+                  "description": "required | Trang thai don hang (vd: new, processing, delivered...)"
                 },
                 {
                   "key": "customer_name",
                   "value": "Nguyen Van A",
-                  "type": "text"
+                  "type": "text",
+                  "description": "required | Ten khach hang"
                 },
                 {
                   "key": "customer_phone",
                   "value": "0900000000",
-                  "type": "text"
+                  "type": "text",
+                  "description": "required | So dien thoai khach hang"
                 },
                 {
                   "key": "customer_address",
                   "value": "123 Duong ABC",
-                  "type": "text"
+                  "type": "text",
+                  "description": "optional | Dia chi chi tiet"
                 },
                 {
                   "key": "customer_province_code",
                   "value": "01",
-                  "type": "text"
+                  "type": "text",
+                  "description": "required | Ma tinh/thanh (exists: provinces.code)"
                 },
                 {
                   "key": "customer_district_code",
                   "value": "001",
-                  "type": "text"
+                  "type": "text",
+                  "description": "optional | Ma quan/huyen"
                 },
                 {
                   "key": "customer_district_name",
                   "value": "Quan 1",
-                  "type": "text"
+                  "type": "text",
+                  "description": "optional | Ten quan/huyen"
                 },
                 {
                   "key": "customer_ward_code",
                   "value": "00001",
-                  "type": "text"
+                  "type": "text",
+                  "description": "required | Ma phuong/xa (phai thuoc province da chon)"
                 }
               ]
             },
@@ -418,7 +430,8 @@
                 "v1",
                 "orders"
               ]
-            }
+            },
+            "description": "Store order (form-data). Required fields: order_date, seller_user_id, order_channel, order_status, customer_name, customer_phone, customer_province_code, customer_ward_code."
           },
           "event": [
             {

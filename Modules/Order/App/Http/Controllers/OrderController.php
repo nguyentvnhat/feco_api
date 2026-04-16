@@ -5,6 +5,7 @@ namespace Modules\Order\App\Http\Controllers;
 use App\Http\Controllers\BaseApiController;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Modules\Core\Models\Province;
 use Modules\Core\Models\Ward;
 use Modules\Order\App\Http\Requests\StoreOrderRequest;
@@ -21,6 +22,81 @@ use Modules\Order\Models\OrderAddress;
  */
 class OrderController extends BaseApiController
 {
+    public function historyCommission(): JsonResponse
+    {
+        $userId = auth()->id();
+        if (! $userId) {
+            return $this->successResponse('api.order.history_commission_success', [
+                'orders' => [],
+            ]);
+        }
+
+        if (! Schema::hasTable('commission_entries') || ! Schema::hasTable('commission_policies')) {
+            return $this->successResponse('api.order.history_commission_success', [
+                'orders' => [],
+            ]);
+        }
+
+        $rows = DB::table('orders')
+            ->join('commission_entries', 'commission_entries.source_order_id', '=', 'orders.id')
+            ->leftJoin('commission_policies', 'commission_policies.id', '=', 'commission_entries.policy_id')
+            ->where('orders.seller_user_id', $userId)
+            ->orderByDesc('orders.id')
+            ->orderByDesc('commission_entries.id')
+            ->get([
+                'orders.id as order_id',
+                'orders.order_no',
+                'orders.order_date',
+                'orders.order_status',
+                'orders.net_amount',
+                'commission_entries.id as commission_entry_id',
+                'commission_entries.entry_type',
+                'commission_entries.amount as commission_amount',
+                'commission_entries.rate_percent',
+                'commission_entries.basis_type',
+                'commission_entries.basis_value',
+                'commission_entries.settlement_status',
+                'commission_policies.policy_code',
+                'commission_policies.policy_name',
+            ]);
+
+        $orders = $rows
+            ->groupBy('order_id')
+            ->map(function ($items) {
+                $first = $items->first();
+
+                return [
+                    'id' => (int) $first->order_id,
+                    'order_no' => $first->order_no,
+                    'order_date' => $first->order_date,
+                    'order_status' => (string) $first->order_status,
+                    'order_label_status' => OrderStatus::orderLabelStatusForValue((string) $first->order_status),
+                    'net_amount' => $this->formatVietnameseMoney($first->net_amount),
+                    'currency' => $this->vietnameseMoneyCurrency(),
+                    'commissions' => collect($items)->map(function ($row) {
+                        return [
+                            'id' => (int) $row->commission_entry_id,
+                            'entry_type' => $row->entry_type,
+                            'policy_code' => $row->policy_code,
+                            'policy_name' => $row->policy_name,
+                            'amount' => $this->formatVietnameseMoney($row->commission_amount),
+                            'rate_percent' => $row->rate_percent !== null ? (float) $row->rate_percent : null,
+                            'basis_type' => $row->basis_type,
+                            'basis_value' => $this->formatVietnameseMoney($row->basis_value),//(float) $row->basis_value,
+                            'settlement_status' => $row->settlement_status,
+                            'settlement_status_label_vi' => $this->commissionSettlementStatusLabelVi((string) $row->settlement_status),
+                            'currency' => $this->vietnameseMoneyCurrency(),
+                        ];
+                    })->values(),
+                ];
+            })
+            ->values();
+
+        return $this->successResponse('api.order.history_commission_success', [
+            'orders' => $orders,
+        ]);
+    }
+
     public function index(): JsonResponse
     {
         $userId = auth()->id();
@@ -289,6 +365,17 @@ class OrderController extends BaseApiController
         }
 
         return null;
+    }
+
+    private function commissionSettlementStatusLabelVi(string $status): string
+    {
+        return match ($status) {
+            'pending' => 'Chờ duyệt',
+            'approved' => 'Đã duyệt',
+            'paid' => 'Đã thanh toán',
+            'rejected' => 'Từ chối',
+            default => $status,
+        };
     }
 
 }

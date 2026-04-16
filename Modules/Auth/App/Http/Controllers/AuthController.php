@@ -4,11 +4,14 @@ namespace Modules\Auth\App\Http\Controllers;
 
 use App\Http\Controllers\BaseApiController;
 use App\Models\User;
+use App\Support\AuthTokenIssuer;
+use Carbon\CarbonInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
+use Laravel\Sanctum\PersonalAccessToken;
 
 class AuthController extends BaseApiController
 {
@@ -35,41 +38,9 @@ class AuthController extends BaseApiController
             return $this->errorResponse('api.auth.account_not_activated', 403, (object) []);
         }
 
-        $agent = null;
-        $agentCommissionPolicy = collect();
-        if (Schema::hasTable('agents')) {
-            $query = DB::table('agents')->where('agents.user_id', $user->id);
-            $selects = [
-                'agents.id',
-                'agents.code',
-                'agents.name',
-                'agents.business_name',
-                'agents.status',
-                'agents.agent_type_id',
-            ];
-
-            if (Schema::hasColumn('agents', 'full_address')) {
-                $selects[] = 'agents.full_address';
-            }
-
-            if (Schema::hasTable('agent_types')) {
-                $query->leftJoin('agent_types', 'agent_types.id', '=', 'agents.agent_type_id');
-                $selects[] = 'agent_types.code as agent_type_code';
-                $selects[] = 'agent_types.name as agent_type_name';
-            }
-
-            $agent = $query->select($selects)->first();
-
-            if ($agent && Schema::hasTable('agent_commission_policy')) {
-                $agentCommissionPolicy = DB::table('agent_commission_policy')
-                    ->where('agent_id', $agent->id)
-                    ->orderBy('commission_policy_id')
-                    ->get([
-                        'id',
-                        'commission_policy_id',
-                    ]);
-            }
-        }
+        $agentContext = $this->buildAgentContext($user);
+        $agent = $agentContext['agent'];
+        $agentCommissionPolicy = $agentContext['agent_commission_policy'];
 
         if ($agent && $agentCommissionPolicy->isEmpty()) {
             return $this->errorResponse('api.auth.agent_policy_not_configured', 403, (object) []);
@@ -79,10 +50,38 @@ class AuthController extends BaseApiController
             ? $this->getOrderSummaryByAgent((int) $agent->id, (string) ($agent->code ?? ''), $user->id)
             : ['order_sold_count' => 0, 'total_revenue' => 0];
 
-        $token = $user->createToken('api')->plainTextToken;
+        $tokens = AuthTokenIssuer::issue($user);
 
         return $this->successResponse('api.auth.login_success', [
-            'token' => $token,
+            'token' => $tokens['token'],
+            'refresh_token' => $tokens['refresh_token'],
+            'token_type' => 'Bearer',
+            'expires_at' => $this->formatIsoDateTime($tokens['expires_at']),
+            'refresh_expires_at' => $this->formatIsoDateTime($tokens['refresh_expires_at']),
+            'user' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'phone' => $user->phone ?? null,
+            ],
+        ]);
+    }
+
+    public function me(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (! $user instanceof User) {
+            return $this->errorResponse('api.auth.invalid_credentials', 401, (object) []);
+        }
+
+        $agentContext = $this->buildAgentContext($user);
+        $agent = $agentContext['agent'];
+        $agentCommissionPolicy = $agentContext['agent_commission_policy'];
+        $agentOrderSummary = $agent
+            ? $this->getOrderSummaryByAgent((int) $agent->id, (string) ($agent->code ?? ''), $user->id)
+            : ['order_sold_count' => 0, 'total_revenue' => 0];
+
+        return $this->successResponse('api.auth.login_success', [
             'user' => [
                 'id' => $user->id,
                 'name' => $user->name,
@@ -94,6 +93,7 @@ class AuthController extends BaseApiController
                 'code' => $agent->code,
                 'name' => $agent->name,
                 'business_name' => $agent->business_name,
+                'logo_path' => $agent->logo_path ?? null,
                 'full_address' => $agent->full_address ?? null,
                 'status' => $agent->status,
                 'agent_type' => [
@@ -106,6 +106,45 @@ class AuthController extends BaseApiController
                 'currency' => $this->vietnameseMoneyCurrency(),
                 'agent_commission_policy' => $agentCommissionPolicy->values(),
             ] : null,
+        ]);
+    }
+
+    public function refresh(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'refresh_token' => ['required', 'string'],
+        ]);
+
+        $refreshTokenValue = $validated['refresh_token'];
+        $token = PersonalAccessToken::findToken($refreshTokenValue);
+        if (! $token || ! $token->can('refresh')) {
+            return $this->errorResponse('api.auth.invalid_credentials', 401, (object) []);
+        }
+
+        if ($token->expires_at && $token->expires_at->isPast()) {
+            $token->delete();
+
+            return $this->errorResponse('api.auth.invalid_credentials', 401, (object) []);
+        }
+
+        $user = $token->tokenable;
+        if (! $user instanceof User) {
+            return $this->errorResponse('api.auth.invalid_credentials', 401, (object) []);
+        }
+
+        if (Schema::hasColumn('users', 'status') && (string) ($user->status ?? '') !== 'active') {
+            return $this->errorResponse('api.auth.account_not_activated', 403, (object) []);
+        }
+
+        $token->delete();
+        $tokens = AuthTokenIssuer::issue($user);
+
+        return $this->successResponse('api.auth.login_success', [
+            'token' => $tokens['token'],
+            'refresh_token' => $tokens['refresh_token'],
+            'token_type' => 'Bearer',
+            'expires_at' => $this->formatIsoDateTime($tokens['expires_at']),
+            'refresh_expires_at' => $this->formatIsoDateTime($tokens['refresh_expires_at']),
         ]);
     }
 
@@ -156,6 +195,63 @@ class AuthController extends BaseApiController
         return [
             'order_sold_count' => (int) $ordersQuery->count(),
             'total_revenue' => (float) $ordersQuery->sum('net_amount'),
+        ];
+    }
+
+    private function formatIsoDateTime(CarbonInterface $dateTime): string
+    {
+        return $dateTime->toIso8601String();
+    }
+
+    /**
+     * @return array{agent:object|null,agent_commission_policy:\Illuminate\Support\Collection}
+     */
+    private function buildAgentContext(User $user): array
+    {
+        $agent = null;
+        $agentCommissionPolicy = collect();
+
+        if (Schema::hasTable('agents')) {
+            $query = DB::table('agents')->where('agents.user_id', $user->id);
+            $selects = [
+                'agents.id',
+                'agents.code',
+                'agents.name',
+                'agents.business_name',
+                'agents.status',
+                'agents.agent_type_id',
+            ];
+
+            if (Schema::hasColumn('agents', 'full_address')) {
+                $selects[] = 'agents.full_address';
+            }
+
+            if (Schema::hasColumn('agents', 'logo_path')) {
+                $selects[] = 'agents.logo_path';
+            }
+
+            if (Schema::hasTable('agent_types')) {
+                $query->leftJoin('agent_types', 'agent_types.id', '=', 'agents.agent_type_id');
+                $selects[] = 'agent_types.code as agent_type_code';
+                $selects[] = 'agent_types.name as agent_type_name';
+            }
+
+            $agent = $query->select($selects)->first();
+
+            if ($agent && Schema::hasTable('agent_commission_policy')) {
+                $agentCommissionPolicy = DB::table('agent_commission_policy')
+                    ->where('agent_id', $agent->id)
+                    ->orderBy('commission_policy_id')
+                    ->get([
+                        'id',
+                        'commission_policy_id',
+                    ]);
+            }
+        }
+
+        return [
+            'agent' => $agent,
+            'agent_commission_policy' => $agentCommissionPolicy,
         ];
     }
 }
