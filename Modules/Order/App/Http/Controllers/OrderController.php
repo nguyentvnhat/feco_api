@@ -102,10 +102,13 @@ class OrderController extends BaseApiController
         $userId = auth()->id();
 
         $orders = Order::query()
+            ->with('shippingAddress')
             ->where('seller_user_id', $userId)
             ->latest('id')
             ->get()
             ->map(function (Order $order) {
+                $customer = $order->legacyCustomerAddressForApi();
+
                 return [
                     'id' => $order->id,
                     'order_no' => $order->order_no,
@@ -117,6 +120,8 @@ class OrderController extends BaseApiController
                     'discount_amount' => $this->formatVietnameseMoney($order->discount_amount),
                     'net_amount' => $this->formatVietnameseMoney($order->net_amount),
                     'currency' => $this->vietnameseMoneyCurrency(),
+                    'customer' => $customer,
+                    'shipping' => $order->shippingAddress,
                     'has_invoice_file' => $order->invoice_file_path !== null,
                     'has_delivery_receipt_paths' => $order->delivery_receipt_paths !== null,
                 ];
