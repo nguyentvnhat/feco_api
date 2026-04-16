@@ -4,6 +4,8 @@ namespace Modules\Agent\App\Http\Controllers;
 
 use App\Http\Controllers\BaseApiController;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Modules\Agent\App\Http\Requests\ListChildAgentsRequest;
 use Modules\Agent\Models\Agent;
 
@@ -46,7 +48,17 @@ class ChildAgentController extends BaseApiController
                 'agent_type_id',
                 'created_at',
                 'updated_at',
-            ]);
+            ])
+            ->map(function (Agent $agent) {
+                $summary = $this->getOrderSummaryByAgent($agent);
+
+                return array_merge($agent->toArray(), [
+                    'order_sold_count' => $summary['order_sold_count'],
+                    'total_revenue' => $this->formatVietnameseMoney($summary['total_revenue']),
+                    'currency' => $this->vietnameseMoneyCurrency(),
+                ]);
+            })
+            ->values();
 
         return $this->successResponse('api.agent.children_success', [
             'parent_agent' => [
@@ -57,5 +69,44 @@ class ChildAgentController extends BaseApiController
             ],
             'agents' => $agents,
         ]);
+    }
+
+    /**
+     * @return array{order_sold_count:int,total_revenue:float}
+     */
+    private function getOrderSummaryByAgent(Agent $agent): array
+    {
+        if (! Schema::hasTable('orders')) {
+            return ['order_sold_count' => 0, 'total_revenue' => 0];
+        }
+
+        $agentProfileId = null;
+        if (Schema::hasTable('agent_profiles')) {
+            $profileQuery = DB::table('agent_profiles');
+
+            if (Schema::hasColumn('agent_profiles', 'user_id') && $agent->user_id) {
+                $agentProfileId = $profileQuery->where('user_id', $agent->user_id)->value('id');
+            }
+
+            if (! $agentProfileId && Schema::hasColumn('agent_profiles', 'agent_code') && $agent->code) {
+                $agentProfileId = DB::table('agent_profiles')
+                    ->where('agent_code', $agent->code)
+                    ->value('id');
+            }
+        }
+
+        $ordersQuery = DB::table('orders');
+        if ($agentProfileId && Schema::hasColumn('orders', 'agent_profile_id')) {
+            $ordersQuery->where('agent_profile_id', (int) $agentProfileId);
+        } elseif (Schema::hasColumn('orders', 'seller_user_id') && $agent->user_id) {
+            $ordersQuery->where('seller_user_id', $agent->user_id);
+        } else {
+            return ['order_sold_count' => 0, 'total_revenue' => 0];
+        }
+
+        return [
+            'order_sold_count' => (int) $ordersQuery->count(),
+            'total_revenue' => (float) $ordersQuery->sum('net_amount'),
+        ];
     }
 }

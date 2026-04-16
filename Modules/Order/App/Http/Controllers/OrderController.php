@@ -37,9 +37,10 @@ class OrderController extends BaseApiController
                     'order_status' => $order->statusValue(),
                     'order_label_status' => OrderStatus::orderLabelStatusForValue($order->statusValue()),
                     'order_channel' => $order->order_channel,
-                    'subtotal_amount' => $order->subtotal_amount,
-                    'discount_amount' => $order->discount_amount,
-                    'net_amount' => $order->net_amount,
+                    'subtotal_amount' => $this->formatVietnameseMoney($order->subtotal_amount),
+                    'discount_amount' => $this->formatVietnameseMoney($order->discount_amount),
+                    'net_amount' => $this->formatVietnameseMoney($order->net_amount),
+                    'currency' => $this->vietnameseMoneyCurrency(),
                     'has_invoice_file' => $order->invoice_file_path !== null,
                     'has_delivery_receipt_paths' => $order->delivery_receipt_paths !== null,
                 ];
@@ -99,12 +100,26 @@ class OrderController extends BaseApiController
             'order_status' => $order->statusValue(),
             'order_label_status' => OrderStatus::orderLabelStatusForValue($order->statusValue()),
             'order_channel' => $order->order_channel,
-            'subtotal_amount' => $order->subtotal_amount,
-            'discount_amount' => $order->discount_amount,
-            'net_amount' => $order->net_amount,
+            'subtotal_amount' => $this->formatVietnameseMoney($order->subtotal_amount),
+            'discount_amount' => $this->formatVietnameseMoney($order->discount_amount),
+            'net_amount' => $this->formatVietnameseMoney($order->net_amount),
+            'currency' => $this->vietnameseMoneyCurrency(),
             ...$order->legacyCustomerAddressForApi(),
             'shipping' => $order->shippingAddress,
             'pickup' => $order->pickupAddress,
+            'products' => $order->items->map(function ($item) {
+                return [
+                    'id' => $item->id,
+                    'product_id' => $item->product_id,
+                    'product_name' => $item->product_name_snapshot,
+                    'unit' => $item->unit,
+                    'quantity' => (float) $item->quantity,
+                    'quantity_in_base_unit' => (float) $item->quantity_in_base_unit,
+                    'unit_price' => $this->formatVietnameseMoney($item->unit_price),
+                    'line_amount' => $this->formatVietnameseMoney($item->line_amount),
+                    'currency' => $this->vietnameseMoneyCurrency(),
+                ];
+            })->values(),
             'latest_shipment' => $order->latestShipment
                 ? $order->latestShipment->toApiArray()
                 : null,
@@ -275,4 +290,5 @@ class OrderController extends BaseApiController
 
         return null;
     }
+
 }

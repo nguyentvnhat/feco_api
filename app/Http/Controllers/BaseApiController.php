@@ -7,6 +7,8 @@ use Illuminate\Support\Facades\Lang;
 
 class BaseApiController extends Controller
 {
+    protected const MONEY_CURRENCY_VND = 'đ';
+
     /**
      * @param  array<string, mixed>|object  $data
      * @param  array<string, mixed>  $replace
@@ -63,5 +65,15 @@ class BaseApiController extends Controller
         }
 
         return __($messageKey, $replace);
+    }
+
+    protected function formatVietnameseMoney(mixed $amount): string
+    {
+        return number_format((float) $amount, 0, ',', '.');
+    }
+
+    protected function vietnameseMoneyCurrency(): string
+    {
+        return self::MONEY_CURRENCY_VND;
     }
 }
