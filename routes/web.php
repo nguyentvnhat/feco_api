@@ -14,5 +14,8 @@ use Illuminate\Support\Facades\Route;
 */
 
 Route::get('/', function () {
-    return view('welcome');
+    return response('', 404)->withHeaders([
+        'X-Robots-Tag' => 'noindex, nofollow, noarchive',
+        'Cache-Control' => 'private, no-store',
+    ]);
 });

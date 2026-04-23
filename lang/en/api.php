@@ -1,6 +1,9 @@
 <?php
 
 return [
+    'errors' => [
+        'not_found' => 'Not found.',
+    ],
     'auth' => [
         'invalid_credentials' => 'Invalid credentials.',
         'login_success' => 'Login successful.',
