@@ -13,6 +13,7 @@ return [
         'create_success' => 'Lấy dữ liệu tạo đơn hàng thành công.',
         'show_success' => 'Lấy chi tiết đơn hàng thành công.',
         'history_commission_success' => 'Lấy lịch sử hoa hồng theo đơn hàng thành công.',
+        'statuses_success' => 'Lấy danh sách trạng thái đơn hàng thành công.',
         'store_success' => 'Tạo đơn hàng thành công.',
         'update_success' => 'Cập nhật đơn hàng thành công.',
         'agent_code_not_found' => 'Không tìm thấy mã đại lý của người dùng hiện tại để tạo mã đơn hàng.',
