@@ -1,0 +1,710 @@
+{
+  "info": {
+    "_postman_id": "d7edfa50-d1a6-45b5-93cf-8d2441fb9f43",
+    "name": "feco_api - Auth & Order Basic",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Basic Postman collection for Auth and Order APIs with token automation."
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000"
+    },
+    {
+      "key": "login",
+      "value": "admin@example.com"
+    },
+    {
+      "key": "password",
+      "value": "secret"
+    },
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "order_id",
+      "value": "1"
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "login",
+                  "value": "{{login}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{password}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Login via phone/email and save Sanctum token."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Login status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Response has common wrapper', function () {",
+                  "    pm.expect(res).to.have.property('success', true);",
+                  "    pm.expect(res).to.have.property('message');",
+                  "    pm.expect(res).to.have.property('data');",
+                  "});",
+                  "",
+                  "var token = res && res.data ? res.data.token : null;",
+                  "",
+                  "pm.test('Token exists', function () {",
+                  "    pm.expect(token).to.be.a('string').and.not.empty;",
+                  "});",
+                  "",
+                  "pm.test('Login includes agent info fields', function () {",
+                  "    pm.expect(res.data).to.have.property('agent');",
+                  "    if (res.data.agent) {",
+                  "        pm.expect(res.data.agent).to.have.property('business_name');",
+                  "        pm.expect(res.data.agent).to.have.property('full_address');",
+                  "        pm.expect(res.data.agent).to.have.property('status');",
+                  "        pm.expect(res.data.agent).to.have.property('agent_type');",
+                  "        pm.expect(res.data.agent).to.have.property('agent_commission_policy');",
+                  "    }",
+                  "});",
+                  "",
+                  "if (token) {",
+                  "    pm.collectionVariables.set('token', token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/logout",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "logout"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Logout status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Response has common wrapper', function () {",
+                  "    pm.expect(res).to.have.property('success', true);",
+                  "    pm.expect(res).to.have.property('message');",
+                  "    pm.expect(res).to.have.property('data');",
+                  "});",
+                  "",
+                  "pm.collectionVariables.unset('token');"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Order",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "description": "Basic endpoints mapped from OrderController methods (show/store/update).",
+      "item": [
+        {
+          "name": "List My Orders",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders?limit=5",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "5",
+                  "description": "optional | Giới hạn số đơn (1–100). Bỏ query để lấy toàn bộ."
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('List orders status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Response has common wrapper', function () {",
+                  "    pm.expect(res).to.have.property('success', true);",
+                  "    pm.expect(res).to.have.property('message');",
+                  "    pm.expect(res).to.have.property('data');",
+                  "});",
+                  "",
+                  "pm.test('Contains orders array', function () {",
+                  "    pm.expect(res.data).to.have.property('orders');",
+                  "    pm.expect(res.data.orders).to.be.an('array');",
+                  "});",
+                  "",
+                  "if (res.data.orders && res.data.orders.length) {",
+                  "    pm.test('Order row has Vietnamese status label', function () {",
+                  "        var o = res.data.orders[0];",
+                  "        pm.expect(o).to.have.property('order_label_status');",
+                  "        pm.expect(o.order_label_status).to.be.a('string');",
+                  "        pm.expect(o).to.have.property('products');",
+                  "        pm.expect(o.products).to.be.an('array');",
+                  "        if (o.products.length > 0) {",
+                  "            pm.expect(o.products[0]).to.have.property('image_path');",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Order Statuses",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders/statuses",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "statuses"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Order statuses status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Response contains statuses array', function () {",
+                  "    pm.expect(res.data).to.have.property('statuses');",
+                  "    pm.expect(res.data.statuses).to.be.an('array');",
+                  "});",
+                  "",
+                  "if (Array.isArray(res.data.statuses) && res.data.statuses.length > 0) {",
+                  "    pm.test('Status item has value and label', function () {",
+                  "        pm.expect(res.data.statuses[0]).to.have.property('value');",
+                  "        pm.expect(res.data.statuses[0]).to.have.property('label');",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Order Metadata",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders/create",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "create"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Create metadata status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Response has common wrapper', function () {",
+                  "    pm.expect(res).to.have.property('success', true);",
+                  "    pm.expect(res).to.have.property('message');",
+                  "    pm.expect(res).to.have.property('data');",
+                  "});",
+                  "",
+                  "pm.test('Contains products/provinces/wards', function () {",
+                  "    pm.expect(res.data).to.have.property('products');",
+                  "    pm.expect(res.data).to.have.property('provinces');",
+                  "    pm.expect(res.data).to.have.property('wards');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Show Order",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders/{{order_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{order_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Show order status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Response has order_label_status', function () {",
+                  "    pm.expect(res.data).to.have.property('order_label_status');",
+                  "    pm.expect(res.data.order_label_status).to.be.a('string');",
+                  "});",
+                  "",
+                  "pm.test('Response has invoice and delivery receipt flags', function () {",
+                  "    pm.expect(res.data).to.have.property('has_invoice_file');",
+                  "    pm.expect(res.data).to.have.property('has_delivery_receipt_paths');",
+                  "});",
+                  "",
+                  "pm.test('Products include image_path field', function () {",
+                  "    if (Array.isArray(res.data.products) && res.data.products.length > 0) {",
+                  "        pm.expect(res.data.products[0]).to.have.property('image_path');",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Store Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "order_date",
+                  "value": "2026-04-16",
+                  "type": "text",
+                  "description": "required | Ngay dat don, dinh dang YYYY-MM-DD"
+                },
+                {
+                  "key": "seller_user_id",
+                  "value": "1",
+                  "type": "text",
+                  "description": "required | ID user ban hang (exists: users.id)"
+                },
+                {
+                  "key": "agent_profile_id",
+                  "value": "",
+                  "type": "text",
+                  "description": "optional | ID ho so dai ly (exists: agent_profiles.id)"
+                },
+                {
+                  "key": "order_channel",
+                  "value": "direct_sale",
+                  "type": "text",
+                  "description": "required | agent_order | direct_sale | internal_sale"
+                },
+                {
+                  "key": "order_status",
+                  "value": "new",
+                  "type": "text",
+                  "description": "required | Trang thai don hang (vd: new, processing, delivered...)"
+                },
+                {
+                  "key": "customer_name",
+                  "value": "Nguyen Van A",
+                  "type": "text",
+                  "description": "required | Ten khach hang"
+                },
+                {
+                  "key": "customer_phone",
+                  "value": "0900000000",
+                  "type": "text",
+                  "description": "required | So dien thoai khach hang"
+                },
+                {
+                  "key": "customer_address",
+                  "value": "123 Duong ABC",
+                  "type": "text",
+                  "description": "optional | Dia chi chi tiet"
+                },
+                {
+                  "key": "customer_province_code",
+                  "value": "01",
+                  "type": "text",
+                  "description": "required | Ma tinh/thanh (exists: provinces.code)"
+                },
+                {
+                  "key": "customer_district_code",
+                  "value": "001",
+                  "type": "text",
+                  "description": "optional | Ma quan/huyen"
+                },
+                {
+                  "key": "customer_district_name",
+                  "value": "Quan 1",
+                  "type": "text",
+                  "description": "optional | Ten quan/huyen"
+                },
+                {
+                  "key": "customer_ward_code",
+                  "value": "00001",
+                  "type": "text",
+                  "description": "required | Ma phuong/xa (phai thuoc province da chon)"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders"
+              ]
+            },
+            "description": "Store order (form-data). Required fields: order_date, seller_user_id, order_channel, order_status, customer_name, customer_phone, customer_province_code, customer_ward_code."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Store order status is 201', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Response has order_label_status', function () {",
+                  "    pm.expect(res.data).to.have.property('order_label_status');",
+                  "    pm.expect(res.data.order_label_status).to.be.a('string');",
+                  "});",
+                  "",
+                  "if (res && res.data && res.data.id) {",
+                  "    pm.collectionVariables.set('order_id', String(res.data.id));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update Order",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "order_date",
+                  "value": "2026-04-16",
+                  "type": "text"
+                },
+                {
+                  "key": "seller_user_id",
+                  "value": "1",
+                  "type": "text"
+                },
+                {
+                  "key": "agent_profile_id",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "order_channel",
+                  "value": "direct_sale",
+                  "type": "text"
+                },
+                {
+                  "key": "order_status",
+                  "value": "new",
+                  "type": "text"
+                },
+                {
+                  "key": "customer_name",
+                  "value": "Nguyen Van A",
+                  "type": "text"
+                },
+                {
+                  "key": "customer_phone",
+                  "value": "0900000000",
+                  "type": "text"
+                },
+                {
+                  "key": "customer_address",
+                  "value": "123 Duong XYZ",
+                  "type": "text"
+                },
+                {
+                  "key": "customer_province_code",
+                  "value": "01",
+                  "type": "text"
+                },
+                {
+                  "key": "customer_district_code",
+                  "value": "001",
+                  "type": "text"
+                },
+                {
+                  "key": "customer_district_name",
+                  "value": "Quan 1",
+                  "type": "text"
+                },
+                {
+                  "key": "customer_ward_code",
+                  "value": "00001",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders/{{order_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{order_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Update order status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Response has order_label_status', function () {",
+                  "    pm.expect(res.data).to.have.property('order_label_status');",
+                  "    pm.expect(res.data.order_label_status).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Agent",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "List Child Agents",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/agents/children",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "agents",
+                "children"
+              ]
+            },
+            "description": "Agents where parent_agent_id = logged-in user's agent id. Optional: ?agent_type_id= to filter by child agent_type_id."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Child agents status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Response has common wrapper', function () {",
+                  "    pm.expect(res).to.have.property('success', true);",
+                  "    pm.expect(res).to.have.property('message');",
+                  "    pm.expect(res).to.have.property('data');",
+                  "});",
+                  "",
+                  "pm.test('Has parent_agent and agents', function () {",
+                  "    pm.expect(res.data).to.have.property('parent_agent');",
+                  "    pm.expect(res.data).to.have.property('agents');",
+                  "    pm.expect(res.data.agents).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
