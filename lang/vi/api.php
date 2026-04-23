@@ -1,6 +1,9 @@
 <?php
 
 return [
+    'errors' => [
+        'not_found' => 'Không tìm thấy.',
+    ],
     'auth' => [
         'invalid_credentials' => 'Thông tin đăng nhập không hợp lệ.',
         'login_success' => 'Đăng nhập thành công.',

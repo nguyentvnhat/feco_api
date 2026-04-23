@@ -3,7 +3,7 @@
     "_postman_id": "d7edfa50-d1a6-45b5-93cf-8d2441fb9f43",
     "name": "feco_api - Auth & Order Basic",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "Basic Postman collection for Auth and Order APIs with token automation."
+    "description": "Basic Postman collection for Auth and Order APIs with token automation.\n\nWrong HTTP method or unknown paths under `/api/*` return HTTP 404 with JSON: success=false, message from `api.errors.not_found`, data object (e.g. GET on POST-only routes)."
   },
   "variable": [
     {
@@ -68,7 +68,7 @@
                 "login"
               ]
             },
-            "description": "Login via phone/email and save Sanctum token."
+            "description": "Login via phone/email and save Sanctum token. POST only; GET (or other methods) on this URL returns 404 with the standard API error envelope."
           },
           "event": [
             {
