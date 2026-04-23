@@ -3,6 +3,7 @@
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Modules\Auth\App\Http\Controllers\AuthController;
+use Modules\Auth\App\Http\Controllers\SettingController;
 
 /*
     |--------------------------------------------------------------------------
@@ -25,4 +26,6 @@ Route::prefix('v1/auth')->group(function () {
     Route::get('/me', [AuthController::class, 'me'])->middleware('auth:sanctum');
     Route::post('/logout', [AuthController::class, 'logout'])->middleware('auth:sanctum');
 });
+
+Route::get('v1/settings', [SettingController::class, 'index'])->middleware('auth:sanctum');
 

@@ -113,6 +113,70 @@
           ]
         },
         {
+          "name": "Me",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "me"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Me status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Response has agent_commission_policy list', function () {",
+                  "    if (res.data.agent) {",
+                  "        pm.expect(res.data.agent).to.have.property('agent_commission_policy');",
+                  "        pm.expect(res.data.agent.agent_commission_policy).to.be.an('array');",
+                  "    }",
+                  "});",
+                  "",
+                  "if (res.data.agent && res.data.agent.agent_commission_policy.length > 0) {",
+                  "    pm.test('Commission policy item has policy info', function () {",
+                  "        var p = res.data.agent.agent_commission_policy[0];",
+                  "        pm.expect(p).to.have.property('commission_policy_id');",
+                  "        pm.expect(p).to.have.property('policy_code');",
+                  "        pm.expect(p).to.have.property('policy_name');",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Logout",
           "request": {
             "auth": {
@@ -699,6 +763,79 @@
                   "    pm.expect(res.data).to.have.property('agents');",
                   "    pm.expect(res.data.agents).to.be.an('array');",
                   "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Settings",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "List Settings",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/settings?key=app",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "settings"
+              ],
+              "query": [
+                {
+                  "key": "key",
+                  "value": "app",
+                  "description": "optional | Lọc theo chuỗi trong setting_key"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('List settings status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Response has settings array', function () {",
+                  "    pm.expect(res.data).to.have.property('settings');",
+                  "    pm.expect(res.data.settings).to.be.an('array');",
+                  "});",
+                  "",
+                  "if (res.data.settings && res.data.settings.length > 0) {",
+                  "    pm.test('Setting row has key/value fields', function () {",
+                  "        var row = res.data.settings[0];",
+                  "        pm.expect(row).to.have.property('key');",
+                  "        pm.expect(row).to.have.property('value');",
+                  "        pm.expect(row).to.have.property('value_type');",
+                  "    });",
+                  "}"
                 ]
               }
             }

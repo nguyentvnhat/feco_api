@@ -251,13 +251,51 @@ class AuthController extends BaseApiController
             $agent = $query->select($selects)->first();
 
             if ($agent && Schema::hasTable('agent_commission_policy')) {
-                $agentCommissionPolicy = DB::table('agent_commission_policy')
-                    ->where('agent_id', $agent->id)
-                    ->orderBy('commission_policy_id')
-                    ->get([
-                        'id',
-                        'commission_policy_id',
+                $policySelects = [
+                    'agent_commission_policy.id',
+                    'agent_commission_policy.commission_policy_id',
+                    'agent_commission_policy.created_at',
+                    'agent_commission_policy.updated_at',
+                ];
+
+                $policyQuery = DB::table('agent_commission_policy')
+                    ->where('agent_commission_policy.agent_id', $agent->id)
+                    ->orderBy('agent_commission_policy.commission_policy_id');
+
+                if (Schema::hasTable('commission_policies')) {
+                    $policyQuery->leftJoin(
+                        'commission_policies',
+                        'commission_policies.id',
+                        '=',
+                        'agent_commission_policy.commission_policy_id'
+                    );
+
+                    $policySelects = array_merge($policySelects, [
+                        'commission_policies.policy_code',
+                        'commission_policies.policy_name',
+                        'commission_policies.policy_type',
+                        'commission_policies.target_subject',
+                        'commission_policies.calculation_base',
+                        'commission_policies.reward_type',
+                        'commission_policies.description',
+                        'commission_policies.is_active',
                     ]);
+                }
+
+                $agentCommissionPolicy = $policyQuery
+                    ->get($policySelects)
+                    ->map(function ($row) {
+                        return [
+                            'id' => (int) $row->id,
+                            'policy_name' => $row->policy_name ?? null,
+                            'policy_type' => $row->policy_type ?? null,
+                            'target_subject' => $row->target_subject ?? null,
+                            'calculation_base' => $row->calculation_base ?? null,
+                            'reward_type' => $row->reward_type ?? null,
+                            'description' => $row->description ?? null,
+                        ];
+                    })
+                    ->values();
             }
         }
 
