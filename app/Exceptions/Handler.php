@@ -3,6 +3,10 @@
 namespace App\Exceptions;
 
 use Illuminate\Foundation\Exceptions\Handler as ExceptionHandler;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Throwable;
 
 class Handler extends ExceptionHandler
@@ -26,5 +30,28 @@ class Handler extends ExceptionHandler
         $this->reportable(function (Throwable $e) {
             //
         });
+    }
+
+    public function render($request, Throwable $e)
+    {
+        if ($this->isApiPath($request) && ($e instanceof MethodNotAllowedHttpException || $e instanceof NotFoundHttpException)) {
+            return $this->apiNotFoundJsonResponse();
+        }
+
+        return parent::render($request, $e);
+    }
+
+    private function isApiPath(Request $request): bool
+    {
+        return $request->is('api', 'api/*');
+    }
+
+    private function apiNotFoundJsonResponse(): JsonResponse
+    {
+        return response()->json([
+            'success' => false,
+            'message' => __('api.errors.not_found'),
+            'data' => (object) [],
+        ], 404);
     }
 }
