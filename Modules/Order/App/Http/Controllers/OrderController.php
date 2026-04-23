@@ -4,6 +4,7 @@ namespace Modules\Order\App\Http\Controllers;
 
 use App\Http\Controllers\BaseApiController;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Modules\Core\Models\Province;
@@ -22,6 +23,20 @@ use Modules\Order\Models\OrderAddress;
  */
 class OrderController extends BaseApiController
 {
+    public function statuses(): JsonResponse
+    {
+        $statuses = collect(OrderStatus::values())
+            ->map(fn (string $status) => [
+                'value' => $status,
+                'label' => OrderStatus::orderLabelStatusForValue($status),
+            ])
+            ->values();
+
+        return $this->successResponse('api.order.statuses_success', [
+            'statuses' => $statuses,
+        ]);
+    }
+
     public function historyCommission(): JsonResponse
     {
         $userId = auth()->id();
@@ -97,15 +112,43 @@ class OrderController extends BaseApiController
         ]);
     }
 
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
         $userId = auth()->id();
 
-        $orders = Order::query()
+        $limitParam = $request->query('limit');
+        $limit = is_numeric($limitParam) ? (int) $limitParam : null;
+        if ($limit !== null) {
+            $limit = max(1, min($limit, 100));
+        }
+
+        $query = Order::query()
+            ->with(['shippingAddress', 'items'])
             ->where('seller_user_id', $userId)
-            ->latest('id')
-            ->get()
-            ->map(function (Order $order) {
+            ->latest('id');
+
+        if ($limit !== null) {
+            $query->limit($limit);
+        }
+
+        $ordersCollection = $query->get();
+        $productImagePathsById = DB::table('products')
+            ->whereIn(
+                'id',
+                $ordersCollection
+                    ->pluck('items')
+                    ->flatten()
+                    ->pluck('product_id')
+                    ->filter()
+                    ->unique()
+                    ->values()
+            )
+            ->pluck('image_path', 'id');
+
+        $orders = $ordersCollection
+            ->map(function (Order $order) use ($productImagePathsById) {
+                $customer = $order->legacyCustomerAddressForApi();
+
                 return [
                     'id' => $order->id,
                     'order_no' => $order->order_no,
@@ -117,8 +160,24 @@ class OrderController extends BaseApiController
                     'discount_amount' => $this->formatVietnameseMoney($order->discount_amount),
                     'net_amount' => $this->formatVietnameseMoney($order->net_amount),
                     'currency' => $this->vietnameseMoneyCurrency(),
+                    'customer' => $customer,
+                    'shipping' => $order->shippingAddress,
                     'has_invoice_file' => $order->invoice_file_path !== null,
                     'has_delivery_receipt_paths' => $order->delivery_receipt_paths !== null,
+                    'products' => $order->items->map(function ($item) use ($productImagePathsById) {
+                        return [
+                            'id' => $item->id,
+                            'product_id' => $item->product_id,
+                            'product_name' => $item->product_name_snapshot,
+                            'image_path' => $this->buildAbsoluteImageUrl($productImagePathsById->get($item->product_id)),
+                            'unit' => $item->unit,
+                            'quantity' => (float) $item->quantity,
+                            'quantity_in_base_unit' => (float) $item->quantity_in_base_unit,
+                            'unit_price' => $this->formatVietnameseMoney($item->unit_price),
+                            'line_amount' => $this->formatVietnameseMoney($item->line_amount),
+                            'currency' => $this->vietnameseMoneyCurrency(),
+                        ];
+                    })->values(),
                 ];
             })
             ->values();
@@ -168,6 +227,9 @@ class OrderController extends BaseApiController
     public function show(Order $order): JsonResponse
     {
         $order->load(['shippingAddress', 'pickupAddress', 'items', 'latestShipment']);
+        $productImagePathsById = DB::table('products')
+            ->whereIn('id', $order->items->pluck('product_id')->filter()->unique()->values())
+            ->pluck('image_path', 'id');
 
         return $this->successResponse('api.order.show_success', [
             'id' => $order->id,
@@ -183,11 +245,14 @@ class OrderController extends BaseApiController
             ...$order->legacyCustomerAddressForApi(),
             'shipping' => $order->shippingAddress,
             'pickup' => $order->pickupAddress,
-            'products' => $order->items->map(function ($item) {
+            'has_invoice_file' => $order->invoice_file_path !== null,
+            'has_delivery_receipt_paths' => $order->delivery_receipt_paths !== null,
+            'products' => $order->items->map(function ($item) use ($productImagePathsById) {
                 return [
                     'id' => $item->id,
                     'product_id' => $item->product_id,
                     'product_name' => $item->product_name_snapshot,
+                    'image_path' => $this->buildAbsoluteImageUrl($productImagePathsById->get($item->product_id)),
                     'unit' => $item->unit,
                     'quantity' => (float) $item->quantity,
                     'quantity_in_base_unit' => (float) $item->quantity_in_base_unit,
@@ -376,6 +441,24 @@ class OrderController extends BaseApiController
             'rejected' => 'Từ chối',
             default => $status,
         };
+    }
+
+    private function buildAbsoluteImageUrl(?string $imagePath): ?string
+    {
+        if (! $imagePath) {
+            return null;
+        }
+
+        if (filter_var($imagePath, FILTER_VALIDATE_URL)) {
+            return $imagePath;
+        }
+
+        $baseUrl = rtrim((string) (config('app.url_image') ?: config('app.url')), '/');
+        if ($baseUrl === '') {
+            return '/'.ltrim($imagePath, '/');
+        }
+
+        return $baseUrl.'/'.ltrim($imagePath, '/');
     }
 
 }

@@ -195,7 +195,7 @@
               }
             ],
             "url": {
-              "raw": "{{base_url}}/api/v1/orders",
+              "raw": "{{base_url}}/api/v1/orders?limit=5",
               "host": [
                 "{{base_url}}"
               ],
@@ -203,6 +203,13 @@
                 "api",
                 "v1",
                 "orders"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "5",
+                  "description": "optional | Giới hạn số đơn (1–100). Bỏ query để lấy toàn bộ."
+                }
               ]
             }
           },
@@ -233,6 +240,61 @@
                   "        var o = res.data.orders[0];",
                   "        pm.expect(o).to.have.property('order_label_status');",
                   "        pm.expect(o.order_label_status).to.be.a('string');",
+                  "        pm.expect(o).to.have.property('products');",
+                  "        pm.expect(o.products).to.be.an('array');",
+                  "        if (o.products.length > 0) {",
+                  "            pm.expect(o.products[0]).to.have.property('image_path');",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Order Statuses",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders/statuses",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "statuses"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Order statuses status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Response contains statuses array', function () {",
+                  "    pm.expect(res.data).to.have.property('statuses');",
+                  "    pm.expect(res.data.statuses).to.be.an('array');",
+                  "});",
+                  "",
+                  "if (Array.isArray(res.data.statuses) && res.data.statuses.length > 0) {",
+                  "    pm.test('Status item has value and label', function () {",
+                  "        pm.expect(res.data.statuses[0]).to.have.property('value');",
+                  "        pm.expect(res.data.statuses[0]).to.have.property('label');",
                   "    });",
                   "}"
                 ]
@@ -327,6 +389,17 @@
                   "pm.test('Response has order_label_status', function () {",
                   "    pm.expect(res.data).to.have.property('order_label_status');",
                   "    pm.expect(res.data.order_label_status).to.be.a('string');",
+                  "});",
+                  "",
+                  "pm.test('Response has invoice and delivery receipt flags', function () {",
+                  "    pm.expect(res.data).to.have.property('has_invoice_file');",
+                  "    pm.expect(res.data).to.have.property('has_delivery_receipt_paths');",
+                  "});",
+                  "",
+                  "pm.test('Products include image_path field', function () {",
+                  "    if (Array.isArray(res.data.products) && res.data.products.length > 0) {",
+                  "        pm.expect(res.data.products[0]).to.have.property('image_path');",
+                  "    }",
                   "});"
                 ]
               }

@@ -93,8 +93,8 @@ class AuthController extends BaseApiController
                 'code' => $agent->code,
                 'name' => $agent->name,
                 'business_name' => $agent->business_name,
-                'logo_path' => $agent->logo_path ?? null,
-                'full_address' => $agent->full_address ?? null,
+                'logo_path' => $this->buildAbsoluteAssetUrl($agent->logo_path ?? null),
+                'full_address' => $this->buildAgentFullAddress($agent),
                 'status' => $agent->status,
                 'agent_type' => [
                     'id' => $agent->agent_type_id,
@@ -226,6 +226,18 @@ class AuthController extends BaseApiController
                 $selects[] = 'agents.full_address';
             }
 
+            if (Schema::hasColumn('agents', 'address')) {
+                $selects[] = 'agents.address';
+            }
+
+            if (Schema::hasColumn('agents', 'ward')) {
+                $selects[] = 'agents.ward';
+            }
+
+            if (Schema::hasColumn('agents', 'city')) {
+                $selects[] = 'agents.city';
+            }
+
             if (Schema::hasColumn('agents', 'logo_path')) {
                 $selects[] = 'agents.logo_path';
             }
@@ -253,6 +265,38 @@ class AuthController extends BaseApiController
             'agent' => $agent,
             'agent_commission_policy' => $agentCommissionPolicy,
         ];
+    }
+
+    private function buildAgentFullAddress(object $agent): string
+    {
+        $address = trim((string) ($agent->address ?? ''));
+        $ward = trim((string) ($agent->ward ?? ''));
+        $city = trim((string) ($agent->city ?? ''));
+
+        $parts = array_values(array_filter([$address, $ward, $city], fn (string $part) => $part !== ''));
+        if ($parts !== []) {
+            return implode(', ', $parts);
+        }
+
+        return trim((string) ($agent->full_address ?? ''));
+    }
+
+    private function buildAbsoluteAssetUrl(?string $path): ?string
+    {
+        if (! $path) {
+            return null;
+        }
+
+        if (filter_var($path, FILTER_VALIDATE_URL)) {
+            return $path;
+        }
+
+        $baseUrl = rtrim((string) (config('app.url_image') ?: config('app.url')), '/');
+        if ($baseUrl === '') {
+            return '/'.ltrim($path, '/');
+        }
+
+        return $baseUrl.'/'.ltrim($path, '/');
     }
 }
 
