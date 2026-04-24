@@ -163,6 +163,15 @@
                   "    }",
                   "});",
                   "",
+                  "pm.test('Agent has month revenue and commission fields', function () {",
+                  "    if (res.data.agent) {",
+                  "        pm.expect(res.data.agent).to.have.property('month_revenue');",
+                  "        pm.expect(res.data.agent).to.have.property('month_commission');",
+                  "        pm.expect(res.data.agent.month_revenue).to.be.a('string');",
+                  "        pm.expect(res.data.agent.month_commission).to.be.a('string');",
+                  "    }",
+                  "});",
+                  "",
                   "if (res.data.agent && res.data.agent.agent_commission_policy.length > 0) {",
                   "    pm.test('Commission policy item has policy info', function () {",
                   "        var p = res.data.agent.agent_commission_policy[0];",
@@ -503,7 +512,7 @@
                 },
                 {
                   "key": "order_channel",
-                  "value": "direct_sale",
+                  "value": "agent_order",
                   "type": "text",
                   "description": "required | agent_order | direct_sale | internal_sale"
                 },
@@ -554,6 +563,18 @@
                   "value": "00001",
                   "type": "text",
                   "description": "required | Ma phuong/xa (phai thuoc province da chon)"
+                },
+                {
+                  "key": "products[0][product_id]",
+                  "value": "1",
+                  "type": "text",
+                  "description": "required | ID san pham"
+                },
+                {
+                  "key": "products[0][quantity]",
+                  "value": "2",
+                  "type": "text",
+                  "description": "required | So luong > 0"
                 }
               ]
             },
@@ -568,7 +589,7 @@
                 "orders"
               ]
             },
-            "description": "Store order (form-data). Required fields: order_date, seller_user_id, order_channel, order_status, customer_name, customer_phone, customer_province_code, customer_ward_code."
+            "description": "Store order (form-data). Required fields: order_date, seller_user_id, order_channel, order_status, customer_name, customer_phone, customer_province_code, customer_ward_code, products[]."
           },
           "event": [
             {
@@ -584,6 +605,11 @@
                   "pm.test('Response has order_label_status', function () {",
                   "    pm.expect(res.data).to.have.property('order_label_status');",
                   "    pm.expect(res.data.order_label_status).to.be.a('string');",
+                  "});",
+                  "",
+                  "pm.test('Store order calculates monetary totals', function () {",
+                  "    pm.expect(res.data).to.have.property('subtotal_amount');",
+                  "    pm.expect(res.data).to.have.property('net_amount');",
                   "});",
                   "",
                   "if (res && res.data && res.data.id) {",

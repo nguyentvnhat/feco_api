@@ -3,6 +3,7 @@
 return [
     'errors' => [
         'not_found' => 'Không tìm thấy.',
+        'validation_error' => 'Dữ liệu không hợp lệ.',
     ],
     'auth' => [
         'invalid_credentials' => 'Thông tin đăng nhập không hợp lệ.',

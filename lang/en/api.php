@@ -3,6 +3,7 @@
 return [
     'errors' => [
         'not_found' => 'Not found.',
+        'validation_error' => 'Validation failed.',
     ],
     'auth' => [
         'invalid_credentials' => 'Invalid credentials.',
