@@ -3,6 +3,7 @@
 return [
     'errors' => [
         'not_found' => 'Không tìm thấy.',
+        'validation_error' => 'Dữ liệu không hợp lệ.',
     ],
     'auth' => [
         'invalid_credentials' => 'Thông tin đăng nhập không hợp lệ.',
@@ -24,5 +25,8 @@ return [
     'agent' => [
         'children_success' => 'Lấy danh sách đại lý con thành công.',
         'current_agent_not_found' => 'Tài khoản chưa được gắn với đại lý.',
+    ],
+    'setting' => [
+        'index_success' => 'Lấy danh sách cấu hình thành công.',
     ],
 ];

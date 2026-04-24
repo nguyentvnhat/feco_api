@@ -7,13 +7,12 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-use Modules\Core\Models\Province;
-use Modules\Core\Models\Ward;
 use Modules\Order\App\Http\Requests\StoreOrderRequest;
 use Modules\Order\App\Http\Requests\UpdateOrderRequest;
 use Modules\Order\Enums\OrderStatus;
 use Modules\Order\Models\Order;
 use Modules\Order\Models\OrderAddress;
+use Modules\Order\Models\OrderItem;
 
 /**
  * Ví dụ API: trả về địa chỉ theo format legacy (customer_*) từ shippingAddress.
@@ -56,6 +55,7 @@ class OrderController extends BaseApiController
             ->join('commission_entries', 'commission_entries.source_order_id', '=', 'orders.id')
             ->leftJoin('commission_policies', 'commission_policies.id', '=', 'commission_entries.policy_id')
             ->where('orders.seller_user_id', $userId)
+            ->where('orders.order_status', OrderStatus::DELIVERED->value)
             ->orderByDesc('orders.id')
             ->orderByDesc('commission_entries.id')
             ->get([
@@ -122,68 +122,24 @@ class OrderController extends BaseApiController
             $limit = max(1, min($limit, 100));
         }
 
-        $query = Order::query()
-            ->with(['shippingAddress', 'items'])
-            ->where('seller_user_id', $userId)
-            ->latest('id');
+        return $this->successResponse('api.order.index_success', [
+            'orders' => $this->buildOrdersListPayload($userId, $limit),
+        ]);
+    }
 
-        if ($limit !== null) {
-            $query->limit($limit);
-        }
+    public function search(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'q' => ['required', 'string'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ]);
 
-        $ordersCollection = $query->get();
-        $productImagePathsById = DB::table('products')
-            ->whereIn(
-                'id',
-                $ordersCollection
-                    ->pluck('items')
-                    ->flatten()
-                    ->pluck('product_id')
-                    ->filter()
-                    ->unique()
-                    ->values()
-            )
-            ->pluck('image_path', 'id');
-
-        $orders = $ordersCollection
-            ->map(function (Order $order) use ($productImagePathsById) {
-                $customer = $order->legacyCustomerAddressForApi();
-
-                return [
-                    'id' => $order->id,
-                    'order_no' => $order->order_no,
-                    'order_date' => $order->order_date?->toIso8601String(),
-                    'order_status' => $order->statusValue(),
-                    'order_label_status' => OrderStatus::orderLabelStatusForValue($order->statusValue()),
-                    'order_channel' => $order->order_channel,
-                    'subtotal_amount' => $this->formatVietnameseMoney($order->subtotal_amount),
-                    'discount_amount' => $this->formatVietnameseMoney($order->discount_amount),
-                    'net_amount' => $this->formatVietnameseMoney($order->net_amount),
-                    'currency' => $this->vietnameseMoneyCurrency(),
-                    'customer' => $customer,
-                    'shipping' => $order->shippingAddress,
-                    'has_invoice_file' => $order->invoice_file_path !== null,
-                    'has_delivery_receipt_paths' => $order->delivery_receipt_paths !== null,
-                    'products' => $order->items->map(function ($item) use ($productImagePathsById) {
-                        return [
-                            'id' => $item->id,
-                            'product_id' => $item->product_id,
-                            'product_name' => $item->product_name_snapshot,
-                            'image_path' => $this->buildAbsoluteImageUrl($productImagePathsById->get($item->product_id)),
-                            'unit' => $item->unit,
-                            'quantity' => (float) $item->quantity,
-                            'quantity_in_base_unit' => (float) $item->quantity_in_base_unit,
-                            'unit_price' => $this->formatVietnameseMoney($item->unit_price),
-                            'line_amount' => $this->formatVietnameseMoney($item->line_amount),
-                            'currency' => $this->vietnameseMoneyCurrency(),
-                        ];
-                    })->values(),
-                ];
-            })
-            ->values();
+        $userId = auth()->id();
+        $keyword = (string) ($validated['q'] ?? '');
+        $limit = isset($validated['limit']) ? (int) $validated['limit'] : null;
 
         return $this->successResponse('api.order.index_success', [
-            'orders' => $orders,
+            'orders' => $this->buildOrdersListPayload($userId, $limit, $keyword),
         ]);
     }
 
@@ -196,16 +152,18 @@ class OrderController extends BaseApiController
 
         $products = collect();
         if ($agentId) {
-            $products = DB::table('agent_products')
-                ->join('products', 'products.id', '=', 'agent_products.product_id')
-                ->where('agent_products.agent_id', $agentId)
-                ->orderBy('products.name')
-                ->get([
-                    'products.id',
-                    'products.sku',
-                    'products.name',
-                    'products.base_unit',
-                ]);
+            $products = $this->catalogProductsByAgentId($agentId)
+                ->map(function ($product) {
+                    return [
+                        'id' => (int) $product->id,
+                        'sku' => $product->sku,
+                        'name' => $product->name,
+                        'base_unit' => $product->base_unit,
+                        'unit_price' => $this->formatVietnameseMoney($product->unit_price),
+                        'currency' => $this->vietnameseMoneyCurrency(),
+                    ];
+                })
+                ->values();
         }
 
         $provinces = DB::table('provinces')
@@ -268,7 +226,7 @@ class OrderController extends BaseApiController
     }
 
     /**
-     * Store tối giản: header đơn + địa chỉ giao (không gồm dòng hàng — bổ sung theo domain).
+     * Store: header đơn + địa chỉ giao + dòng hàng products[] và tự tính tiền.
      */
     public function store(StoreOrderRequest $request): JsonResponse
     {
@@ -281,25 +239,84 @@ class OrderController extends BaseApiController
 
         $orderDate = now()->parse($validated['order_date']);
         $addressAttrs = $this->shippingAddressAttributesFromRequest($validated);
+        $requestedProducts = collect($validated['products'] ?? [])
+            ->map(fn ($row) => [
+                'product_id' => (int) ($row['product_id'] ?? 0),
+                'quantity' => (float) ($row['quantity'] ?? 0),
+            ])
+            ->filter(fn ($row) => $row['product_id'] > 0 && $row['quantity'] > 0)
+            ->values();
+
+        if ($requestedProducts->isEmpty()) {
+            return $this->validationErrorResponse([
+                'products' => ['Đơn hàng phải có ít nhất 1 sản phẩm hợp lệ.'],
+            ]);
+        }
+
+        $catalogAgentId = auth()->id()
+            ? (int) (DB::table('agents')->where('user_id', auth()->id())->value('id') ?? 0)
+            : 0;
+        $catalogProducts = $this->catalogProductsByAgentId($catalogAgentId > 0 ? $catalogAgentId : null)
+            ->keyBy('id');
+        $orderItemsPayload = [];
+        $subtotal = 0.0;
+        foreach ($requestedProducts as $row) {
+            $product = $catalogProducts->get($row['product_id']);
+            if (! $product) {
+                return $this->validationErrorResponse([
+                    'products' => ["Sản phẩm #{$row['product_id']} không thuộc danh mục được phép đặt."],
+                ]);
+            }
+
+            $quantity = (float) $row['quantity'];
+            $unitPrice = (float) ($product->unit_price ?? 0);
+            $lineAmount = round($unitPrice * $quantity, 2);
+            $subtotal += $lineAmount;
+
+            $orderItemsPayload[] = [
+                'product_id' => (int) $product->id,
+                'product_name_snapshot' => (string) ($product->name ?? ''),
+                'unit' => (string) ($product->base_unit ?? ''),
+                'quantity' => $quantity,
+                'quantity_in_base_unit' => $quantity,
+                'unit_price' => $unitPrice,
+                'line_amount' => $lineAmount,
+            ];
+        }
+
+        if ($subtotal <= 0) {
+            return $this->validationErrorResponse([
+                'products' => ['Đơn hàng 0đ không hợp lệ. Vui lòng kiểm tra giá và số lượng sản phẩm.'],
+            ]);
+        }
+
+        $discountAmount = 0.0;
+        $netAmount = $subtotal - $discountAmount;
+
         $payload = collect($validated)
             ->except([
                 'customer_province_code',
                 'customer_district_code',
                 'customer_district_name',
                 'customer_ward_code',
+                'products',
             ])
             ->merge([
                 'order_no' => $generatedOrderNo,
                 'order_date' => $orderDate,
                 'order_month' => $orderDate->format('Y-m'),
-                'subtotal_amount' => 0,
-                'discount_amount' => 0,
-                'net_amount' => 0,
+                'subtotal_amount' => $subtotal,
+                'discount_amount' => $discountAmount,
+                'net_amount' => $netAmount,
             ])
             ->all();
 
-        $order = DB::transaction(function () use ($payload, $validated, $addressAttrs) {
+        $order = DB::transaction(function () use ($payload, $orderItemsPayload, $addressAttrs) {
             $order = Order::query()->create($payload);
+            $items = collect($orderItemsPayload)
+                ->map(fn ($item) => new OrderItem($item))
+                ->all();
+            $order->items()->saveMany($items);
             OrderAddress::query()->updateOrCreate(
                 [
                     'order_id' => $order->id,
@@ -307,6 +324,7 @@ class OrderController extends BaseApiController
                 ],
                 $addressAttrs
             );
+            $this->upsertDefaultPickupAddressFromShipping($order, $addressAttrs);
             $order->syncLegacyCustomerColumnsFromShippingAddress();
 
             return $order->fresh(['shippingAddress', 'latestShipment']);
@@ -317,6 +335,9 @@ class OrderController extends BaseApiController
             'order_no' => $order->order_no,
             'order_status' => $order->statusValue(),
             'order_label_status' => OrderStatus::orderLabelStatusForValue($order->statusValue()),
+            'subtotal_amount' => $this->formatVietnameseMoney($order->subtotal_amount),
+            'discount_amount' => $this->formatVietnameseMoney($order->discount_amount),
+            'net_amount' => $this->formatVietnameseMoney($order->net_amount),
             ...$order->legacyCustomerAddressForApi(),
             'latest_shipment' => $order->latestShipment
                 ? $order->latestShipment->toApiArray()
@@ -378,10 +399,10 @@ class OrderController extends BaseApiController
         $provinceCode = $validated['customer_province_code'] ?? null;
         $wardCode = $validated['customer_ward_code'] ?? null;
         $provinceName = $provinceCode
-            ? Province::query()->where('code', $provinceCode)->value('name')
+            ? DB::table('provinces')->where('code', $provinceCode)->value('name')
             : null;
         $wardName = ($wardCode && $provinceCode)
-            ? Ward::query()
+            ? DB::table('wards')
                 ->where('code', $wardCode)
                 ->where('province_code', $provinceCode)
                 ->value('name')
@@ -398,6 +419,30 @@ class OrderController extends BaseApiController
             'ward_code' => $wardCode,
             'ward_name' => $wardName,
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $shippingAttrs
+     */
+    private function upsertDefaultPickupAddressFromShipping(Order $order, array $shippingAttrs): void
+    {
+        OrderAddress::query()->updateOrCreate(
+            [
+                'order_id' => $order->id,
+                'type' => OrderAddress::TYPE_PICKUP,
+            ],
+            [
+                'full_name' => $shippingAttrs['full_name'] ?? null,
+                'phone' => $shippingAttrs['phone'] ?? null,
+                'address_line' => $shippingAttrs['address_line'] ?? null,
+                'province_code' => $shippingAttrs['province_code'] ?? null,
+                'province_name' => $shippingAttrs['province_name'] ?? null,
+                'district_code' => $shippingAttrs['district_code'] ?? null,
+                'district_name' => $shippingAttrs['district_name'] ?? null,
+                'ward_code' => $shippingAttrs['ward_code'] ?? null,
+                'ward_name' => $shippingAttrs['ward_name'] ?? null,
+            ]
+        );
     }
 
     private function generateUniqueOrderNoFromCurrentUserAgentCode(): ?string
@@ -459,6 +504,139 @@ class OrderController extends BaseApiController
         }
 
         return $baseUrl.'/'.ltrim($imagePath, '/');
+    }
+
+    /**
+     * @return \Illuminate\Support\Collection<int, array<string, mixed>>
+     */
+    private function buildOrdersListPayload(?int $userId, ?int $limit = null, ?string $keyword = null)
+    {
+        $query = Order::query()
+            ->with(['shippingAddress', 'items'])
+            ->where('seller_user_id', $userId)
+            ->latest('id');
+
+        $normalizedKeyword = trim((string) $keyword);
+        if ($normalizedKeyword !== '') {
+            $orderNoKeyword = ltrim($normalizedKeyword, '#');
+            $query->where(function ($subQuery) use ($normalizedKeyword, $orderNoKeyword) {
+                $subQuery->where('order_no', 'like', '%'.$orderNoKeyword.'%');
+                if (Schema::hasColumn('orders', 'customer_name')) {
+                    $subQuery->orWhere('customer_name', 'like', '%'.$normalizedKeyword.'%');
+                }
+            });
+        }
+
+        if ($limit !== null) {
+            $query->limit($limit);
+        }
+
+        $ordersCollection = $query->get();
+        $productImagePathsById = DB::table('products')
+            ->whereIn(
+                'id',
+                $ordersCollection
+                    ->pluck('items')
+                    ->flatten()
+                    ->pluck('product_id')
+                    ->filter()
+                    ->unique()
+                    ->values()
+            )
+            ->pluck('image_path', 'id');
+
+        return $ordersCollection
+            ->map(function (Order $order) use ($productImagePathsById) {
+                $customer = $order->legacyCustomerAddressForApi();
+
+                return [
+                    'id' => $order->id,
+                    'order_no' => $order->order_no,
+                    'order_date' => $order->order_date?->toIso8601String(),
+                    'order_status' => $order->statusValue(),
+                    'order_label_status' => OrderStatus::orderLabelStatusForValue($order->statusValue()),
+                    'order_channel' => $order->order_channel,
+                    'subtotal_amount' => $this->formatVietnameseMoney($order->subtotal_amount),
+                    'discount_amount' => $this->formatVietnameseMoney($order->discount_amount),
+                    'net_amount' => $this->formatVietnameseMoney($order->net_amount),
+                    'currency' => $this->vietnameseMoneyCurrency(),
+                    'customer' => $customer,
+                    'shipping' => $order->shippingAddress,
+                    'has_invoice_file' => $order->invoice_file_path !== null,
+                    'has_delivery_receipt_paths' => $order->delivery_receipt_paths !== null,
+                    'products' => $order->items->map(function ($item) use ($productImagePathsById) {
+                        return [
+                            'id' => $item->id,
+                            'product_id' => $item->product_id,
+                            'product_name' => $item->product_name_snapshot,
+                            'image_path' => $this->buildAbsoluteImageUrl($productImagePathsById->get($item->product_id)),
+                            'unit' => $item->unit,
+                            'quantity' => (float) $item->quantity,
+                            'quantity_in_base_unit' => (float) $item->quantity_in_base_unit,
+                            'unit_price' => $this->formatVietnameseMoney($item->unit_price),
+                            'line_amount' => $this->formatVietnameseMoney($item->line_amount),
+                            'currency' => $this->vietnameseMoneyCurrency(),
+                        ];
+                    })->values(),
+                ];
+            })
+            ->values();
+    }
+
+    private function catalogProductsByAgentId(?int $agentId)
+    {
+        $query = DB::table('products')
+            ->join('agent_products', 'agent_products.product_id', '=', 'products.id')
+            ->where('agent_products.agent_id', $agentId)
+            ->orderBy('products.name')
+            ->select([
+                'products.id',
+                'products.sku',
+                'products.name',
+                'products.base_unit',
+                'agent_products.product_id as ap_product_id',
+            ]);
+
+        if (Schema::hasColumn('agent_products', 'unit_price')) {
+            $query->addSelect('agent_products.unit_price as ap_unit_price');
+        }
+        if (Schema::hasColumn('agent_products', 'price')) {
+            $query->addSelect('agent_products.price as ap_price');
+        }
+        if (Schema::hasColumn('products', 'unit_price')) {
+            $query->addSelect('products.unit_price as product_unit_price');
+        }
+        if (Schema::hasColumn('products', 'price')) {
+            $query->addSelect('products.price as product_price');
+        }
+        if (Schema::hasColumn('products', 'list_price')) {
+            $query->addSelect('products.list_price as product_list_price');
+        }
+
+        return $query->get()->map(function ($row) {
+            $unitPrice = $this->resolveProductUnitPrice($row);
+            $row->unit_price = $unitPrice;
+
+            return $row;
+        });
+    }
+
+    private function resolveProductUnitPrice(object $row): float
+    {
+        $candidates = [
+            $row->ap_unit_price ?? null,
+            $row->ap_price ?? null,
+            $row->product_unit_price ?? null,
+            $row->product_price ?? null,
+            $row->product_list_price ?? null,
+        ];
+        foreach ($candidates as $candidate) {
+            if (is_numeric($candidate)) {
+                return (float) $candidate;
+            }
+        }
+
+        return 0.0;
     }
 
 }

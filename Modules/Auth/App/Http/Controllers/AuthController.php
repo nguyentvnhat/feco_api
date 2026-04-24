@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
 use Laravel\Sanctum\PersonalAccessToken;
+use Modules\Order\Enums\OrderStatus;
 
 class AuthController extends BaseApiController
 {
@@ -80,6 +81,12 @@ class AuthController extends BaseApiController
         $agentOrderSummary = $agent
             ? $this->getOrderSummaryByAgent((int) $agent->id, (string) ($agent->code ?? ''), $user->id)
             : ['order_sold_count' => 0, 'total_revenue' => 0];
+        $monthRevenue = $agent
+            ? $this->getMonthlyRevenueForSeller($user->id, (string) ($agent->code ?? ''))
+            : 0.0;
+        $monthCommission = $agent
+            ? $this->getMonthlyCommissionForSeller($user->id, (string) ($agent->code ?? ''))
+            : 0.0;
 
         return $this->successResponse('api.auth.login_success', [
             'user' => [
@@ -103,6 +110,8 @@ class AuthController extends BaseApiController
                 ],
                 'order_sold_count' => $agentOrderSummary['order_sold_count'],
                 'total_revenue' => $this->formatVietnameseMoney($agentOrderSummary['total_revenue']),
+                'month_revenue' => $this->formatVietnameseMoney($monthRevenue),
+                'month_commission' => $this->formatVietnameseMoney($monthCommission),
                 'currency' => $this->vietnameseMoneyCurrency(),
                 'agent_commission_policy' => $agentCommissionPolicy->values(),
             ] : null,
@@ -164,38 +173,105 @@ class AuthController extends BaseApiController
      */
     private function getOrderSummaryByAgent(int $agentId, string $agentCode, int $userId): array
     {
-        if (! Schema::hasTable('orders')) {
-            return ['order_sold_count' => 0, 'total_revenue' => 0];
-        }
-
-        $agentProfileId = null;
-        if (Schema::hasTable('agent_profiles')) {
-            $profileQuery = DB::table('agent_profiles');
-
-            if (Schema::hasColumn('agent_profiles', 'user_id')) {
-                $agentProfileId = $profileQuery->where('user_id', $userId)->value('id');
-            }
-
-            if (! $agentProfileId && Schema::hasColumn('agent_profiles', 'agent_code') && $agentCode !== '') {
-                $agentProfileId = DB::table('agent_profiles')
-                    ->where('agent_code', $agentCode)
-                    ->value('id');
-            }
-        }
-
-        $ordersQuery = DB::table('orders');
-        if ($agentProfileId && Schema::hasColumn('orders', 'agent_profile_id')) {
-            $ordersQuery->where('agent_profile_id', (int) $agentProfileId);
-        } elseif (Schema::hasColumn('orders', 'seller_user_id')) {
-            $ordersQuery->where('seller_user_id', $userId);
-        } else {
+        $ordersQuery = $this->ordersBaseQueryForSeller($userId, $agentCode);
+        if ($ordersQuery === null) {
             return ['order_sold_count' => 0, 'total_revenue' => 0];
         }
 
         return [
-            'order_sold_count' => (int) $ordersQuery->count(),
-            'total_revenue' => (float) $ordersQuery->sum('net_amount'),
+            'order_sold_count' => (int) (clone $ordersQuery)->count(),
+            'total_revenue' => (float) (clone $ordersQuery)->sum('net_amount'),
         ];
+    }
+
+    private function resolveAgentProfileIdForOrders(int $userId, string $agentCode): ?int
+    {
+        if (! Schema::hasTable('agent_profiles')) {
+            return null;
+        }
+
+        $agentProfileId = null;
+        if (Schema::hasColumn('agent_profiles', 'user_id')) {
+            $agentProfileId = DB::table('agent_profiles')->where('user_id', $userId)->value('id');
+        }
+
+        if (! $agentProfileId && Schema::hasColumn('agent_profiles', 'agent_code') && $agentCode !== '') {
+            $agentProfileId = DB::table('agent_profiles')
+                ->where('agent_code', $agentCode)
+                ->value('id');
+        }
+
+        return $agentProfileId !== null ? (int) $agentProfileId : null;
+    }
+
+    /**
+     * Đơn hàng thuộc đại lý đang đăng nhập (theo agent_profile_id hoặc seller_user_id).
+     */
+    private function ordersBaseQueryForSeller(int $userId, string $agentCode): ?\Illuminate\Database\Query\Builder
+    {
+        if (! Schema::hasTable('orders')) {
+            return null;
+        }
+
+        $agentProfileId = $this->resolveAgentProfileIdForOrders($userId, $agentCode);
+        $ordersQuery = DB::table('orders');
+        if ($agentProfileId && Schema::hasColumn('orders', 'agent_profile_id')) {
+            $ordersQuery->where('agent_profile_id', $agentProfileId);
+        } elseif (Schema::hasColumn('orders', 'seller_user_id')) {
+            $ordersQuery->where('seller_user_id', $userId);
+        } else {
+            return null;
+        }
+
+        return $ordersQuery;
+    }
+
+    private function getMonthlyRevenueForSeller(int $userId, string $agentCode): float
+    {
+        $ordersQuery = $this->ordersBaseQueryForSeller($userId, $agentCode);
+        if ($ordersQuery === null) {
+            return 0.0;
+        }
+
+        $monthQuery = clone $ordersQuery;
+        if (Schema::hasColumn('orders', 'order_month')) {
+            $monthQuery->where('order_month', now()->format('Y-m'));
+        } elseif (Schema::hasColumn('orders', 'order_date')) {
+            $monthQuery->whereBetween('order_date', [now()->copy()->startOfMonth(), now()->copy()->endOfMonth()]);
+        }
+
+        return (float) $monthQuery->sum('net_amount');
+    }
+
+    private function getMonthlyCommissionForSeller(int $userId, string $agentCode): float
+    {
+        if (! Schema::hasTable('commission_entries') || ! Schema::hasTable('orders')) {
+            return 0.0;
+        }
+
+        $query = DB::table('commission_entries')
+            ->join('orders', 'orders.id', '=', 'commission_entries.source_order_id');
+
+        $agentProfileId = $this->resolveAgentProfileIdForOrders($userId, $agentCode);
+        if ($agentProfileId && Schema::hasColumn('orders', 'agent_profile_id')) {
+            $query->where('orders.agent_profile_id', $agentProfileId);
+        } elseif (Schema::hasColumn('orders', 'seller_user_id')) {
+            $query->where('orders.seller_user_id', $userId);
+        } else {
+            return 0.0;
+        }
+
+        if (Schema::hasColumn('orders', 'order_month')) {
+            $query->where('orders.order_month', now()->format('Y-m'));
+        } elseif (Schema::hasColumn('orders', 'order_date')) {
+            $query->whereBetween('orders.order_date', [now()->copy()->startOfMonth(), now()->copy()->endOfMonth()]);
+        }
+
+        if (Schema::hasColumn('orders', 'order_status')) {
+            $query->where('orders.order_status', OrderStatus::DELIVERED->value);
+        }
+
+        return (float) $query->sum('commission_entries.amount');
     }
 
     private function formatIsoDateTime(CarbonInterface $dateTime): string
@@ -251,13 +327,51 @@ class AuthController extends BaseApiController
             $agent = $query->select($selects)->first();
 
             if ($agent && Schema::hasTable('agent_commission_policy')) {
-                $agentCommissionPolicy = DB::table('agent_commission_policy')
-                    ->where('agent_id', $agent->id)
-                    ->orderBy('commission_policy_id')
-                    ->get([
-                        'id',
-                        'commission_policy_id',
+                $policySelects = [
+                    'agent_commission_policy.id',
+                    'agent_commission_policy.commission_policy_id',
+                    'agent_commission_policy.created_at',
+                    'agent_commission_policy.updated_at',
+                ];
+
+                $policyQuery = DB::table('agent_commission_policy')
+                    ->where('agent_commission_policy.agent_id', $agent->id)
+                    ->orderBy('agent_commission_policy.commission_policy_id');
+
+                if (Schema::hasTable('commission_policies')) {
+                    $policyQuery->leftJoin(
+                        'commission_policies',
+                        'commission_policies.id',
+                        '=',
+                        'agent_commission_policy.commission_policy_id'
+                    );
+
+                    $policySelects = array_merge($policySelects, [
+                        'commission_policies.policy_code',
+                        'commission_policies.policy_name',
+                        'commission_policies.policy_type',
+                        'commission_policies.target_subject',
+                        'commission_policies.calculation_base',
+                        'commission_policies.reward_type',
+                        'commission_policies.description',
+                        'commission_policies.is_active',
                     ]);
+                }
+
+                $agentCommissionPolicy = $policyQuery
+                    ->get($policySelects)
+                    ->map(function ($row) {
+                        return [
+                            'id' => (int) $row->id,
+                            'policy_name' => $row->policy_name ?? null,
+                            'policy_type' => $row->policy_type ?? null,
+                            'target_subject' => $row->target_subject ?? null,
+                            'calculation_base' => $row->calculation_base ?? null,
+                            'reward_type' => $row->reward_type ?? null,
+                            'description' => $row->description ?? null,
+                        ];
+                    })
+                    ->values();
             }
         }
 

@@ -18,6 +18,7 @@ use Modules\Order\App\Http\Controllers\OrderController;
 Route::middleware(['auth:sanctum'])->prefix('v1')->name('api.')->group(function () {
     Route::get('order/history-commission', [OrderController::class, 'historyCommission'])->name('order.history-commission');
     Route::get('orders/statuses', [OrderController::class, 'statuses'])->name('orders.statuses');
+    Route::get('orders/search', [OrderController::class, 'search'])->name('orders.search');
     Route::get('orders', [OrderController::class, 'index'])->name('orders.index');
     Route::get('orders/create', [OrderController::class, 'create'])->name('orders.create');
     Route::get('orders/{order}', [OrderController::class, 'show'])->name('orders.show');

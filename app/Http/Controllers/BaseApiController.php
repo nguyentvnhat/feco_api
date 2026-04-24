@@ -56,6 +56,23 @@ class BaseApiController extends Controller
     }
 
     /**
+     * @param  array<string, array<int, string>>  $errors
+     */
+    protected function validationErrorResponse(array $errors, string $messageKey = 'api.errors.validation_error'): JsonResponse
+    {
+        $firstError = collect($errors)
+            ->flatten()
+            ->first(fn ($message) => is_string($message) && trim($message) !== '');
+
+        return response()->json([
+            'success' => false,
+            'message' => is_string($firstError) ? $firstError : $this->translateMessage($messageKey),
+            'errors' => $errors,
+            'data' => (object) [],
+        ], 422);
+    }
+
+    /**
      * @param  array<string, mixed>  $replace
      */
     private function translateMessage(string $messageKey, array $replace = []): string
