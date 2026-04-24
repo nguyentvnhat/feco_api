@@ -48,7 +48,7 @@ class SettingController extends BaseApiController
                 return [
                     'id' => (int) $item->id,
                     'key' => (string) $item->setting_key,
-                    'value' => $item->setting_value,
+                    'value' => $this->normalizeSettingValue($item->setting_value, (string) $item->value_type),
                     'value_type' => (string) $item->value_type,
                     'description' => $item->description,
                     'is_public' => (bool) $item->is_public,
@@ -63,5 +63,21 @@ class SettingController extends BaseApiController
                 'key' => $keyFilter,
             ],
         ]);
+    }
+
+    private function normalizeSettingValue(mixed $value, string $valueType): mixed
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        if ($valueType === 'string' && is_string($value)) {
+            $decoded = html_entity_decode(strip_tags($value), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            $normalizedSpaces = str_replace("\xc2\xa0", ' ', $decoded);
+
+            return trim($normalizedSpaces);
+        }
+
+        return $value;
     }
 }
