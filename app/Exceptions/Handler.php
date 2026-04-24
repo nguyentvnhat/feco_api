@@ -2,6 +2,7 @@
 
 namespace App\Exceptions;
 
+use Illuminate\Auth\AuthenticationException;
 use Illuminate\Foundation\Exceptions\Handler as ExceptionHandler;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -34,6 +35,10 @@ class Handler extends ExceptionHandler
 
     public function render($request, Throwable $e)
     {
+        if ($this->isApiPath($request) && $e instanceof AuthenticationException) {
+            return $this->apiUnauthenticatedJsonResponse();
+        }
+
         if ($this->isApiPath($request) && ($e instanceof MethodNotAllowedHttpException || $e instanceof NotFoundHttpException)) {
             return $this->apiNotFoundJsonResponse();
         }
@@ -53,5 +58,14 @@ class Handler extends ExceptionHandler
             'message' => __('api.errors.not_found'),
             'data' => (object) [],
         ], 404);
+    }
+
+    private function apiUnauthenticatedJsonResponse(): JsonResponse
+    {
+        return response()->json([
+            'success' => false,
+            'message' => __('api.auth.invalid_credentials'),
+            'data' => (object) [],
+        ], 401);
     }
 }

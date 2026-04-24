@@ -38,6 +38,9 @@ class StoreOrderRequest extends FormRequest
                     $q->where('province_code', (string) $this->input('customer_province_code'));
                 }),
             ],
+            'products' => ['required', 'array', 'min:1'],
+            'products.*.product_id' => ['required', 'integer', 'exists:products,id'],
+            'products.*.quantity' => ['required', 'numeric', 'gt:0'],
         ];
     }
 
@@ -86,6 +89,16 @@ class StoreOrderRequest extends FormRequest
         'customer_ward_code.string' => 'Phường/Xã không hợp lệ.',
         'customer_ward_code.max' => 'Mã phường/xã không được vượt quá 32 ký tự.',
         'customer_ward_code.exists' => 'Phường/Xã không tồn tại trong tỉnh đã chọn.',
+
+        'products.required' => 'Danh sách sản phẩm là bắt buộc.',
+        'products.array' => 'Danh sách sản phẩm không hợp lệ.',
+        'products.min' => 'Đơn hàng phải có ít nhất 1 sản phẩm.',
+        'products.*.product_id.required' => 'Thiếu mã sản phẩm.',
+        'products.*.product_id.integer' => 'Mã sản phẩm không hợp lệ.',
+        'products.*.product_id.exists' => 'Sản phẩm không tồn tại.',
+        'products.*.quantity.required' => 'Thiếu số lượng sản phẩm.',
+        'products.*.quantity.numeric' => 'Số lượng sản phẩm không hợp lệ.',
+        'products.*.quantity.gt' => 'Số lượng sản phẩm phải lớn hơn 0.',
     ];
 }
 }

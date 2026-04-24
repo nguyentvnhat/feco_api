@@ -3,6 +3,7 @@
 return [
     'errors' => [
         'not_found' => 'Not found.',
+        'validation_error' => 'Validation failed.',
     ],
     'auth' => [
         'invalid_credentials' => 'Invalid credentials.',
@@ -24,5 +25,8 @@ return [
     'agent' => [
         'children_success' => 'Child agents loaded successfully.',
         'current_agent_not_found' => 'This account is not linked to an agent.',
+    ],
+    'setting' => [
+        'index_success' => 'Settings loaded successfully.',
     ],
 ];
