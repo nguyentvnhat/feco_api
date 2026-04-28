@@ -50,6 +50,7 @@ class AuthController extends BaseApiController
         $agentOrderSummary = $agent
             ? $this->getOrderSummaryByAgent((int) $agent->id, (string) ($agent->code ?? ''), $user->id)
             : ['order_sold_count' => 0, 'total_revenue' => 0];
+        $userRoles = $this->getUserRoles($user->id);
 
         $tokens = AuthTokenIssuer::issue($user);
 
@@ -64,6 +65,7 @@ class AuthController extends BaseApiController
                 'name' => $user->name,
                 'email' => $user->email,
                 'phone' => $user->phone ?? null,
+                'roles' => $userRoles,
             ],
         ]);
     }
@@ -411,6 +413,25 @@ class AuthController extends BaseApiController
         }
 
         return $baseUrl.'/'.ltrim($path, '/');
+    }
+
+    private function getUserRoles(int $userId): array
+    {
+        if (! Schema::hasTable('user_roles') || ! Schema::hasTable('roles')) {
+            return [];
+        }
+
+        return DB::table('user_roles')
+            ->join('roles', 'roles.id', '=', 'user_roles.role_id')
+            ->where('user_roles.user_id', $userId)
+            ->orderBy('roles.code')
+            ->get(['roles.code', 'roles.name'])
+            ->map(fn ($role) => [
+                'code' => (string) $role->code,
+                'name' => (string) $role->name,
+            ])
+            ->values()
+            ->all();
     }
 }
 
