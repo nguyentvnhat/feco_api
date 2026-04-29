@@ -39,6 +39,12 @@ class AuthController extends BaseApiController
             return $this->errorResponse('api.auth.account_not_activated', 403, (object) []);
         }
 
+        if (Schema::hasColumn('users', 'last_login_at')) {
+            $user->forceFill([
+                'last_login_at' => now(),
+            ])->save();
+        }
+
         $agentContext = $this->buildAgentContext($user);
         $agent = $agentContext['agent'];
         $agentCommissionPolicy = $agentContext['agent_commission_policy'];
