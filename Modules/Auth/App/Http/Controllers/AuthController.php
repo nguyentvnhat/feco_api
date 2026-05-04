@@ -39,6 +39,16 @@ class AuthController extends BaseApiController
             return $this->errorResponse('api.auth.account_not_activated', 403, (object) []);
         }
 
+        if ($this->hasSoftDeletedAgent($user->id)) {
+            return $this->errorResponse('api.auth.account_not_found', 401, (object) []);
+        }
+
+        if (Schema::hasColumn('users', 'last_login_at')) {
+            $user->forceFill([
+                'last_login_at' => now(),
+            ])->save();
+        }
+
         $agentContext = $this->buildAgentContext($user);
         $agent = $agentContext['agent'];
         $agentCommissionPolicy = $agentContext['agent_commission_policy'];
@@ -432,6 +442,18 @@ class AuthController extends BaseApiController
             ])
             ->values()
             ->all();
+    }
+
+    private function hasSoftDeletedAgent(int $userId): bool
+    {
+        if (! Schema::hasTable('agents') || ! Schema::hasColumn('agents', 'deleted_at')) {
+            return false;
+        }
+
+        return DB::table('agents')
+            ->where('user_id', $userId)
+            ->whereNotNull('deleted_at')
+            ->exists();
     }
 }
 

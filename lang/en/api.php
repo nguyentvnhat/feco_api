@@ -9,6 +9,7 @@ return [
         'invalid_credentials' => 'Invalid credentials.',
         'login_success' => 'Login successful.',
         'logout_success' => 'Logout successful.',
+        'account_not_found' => 'Account does not exist.',
         'account_not_activated' => 'Your account is not activated. Please contact administrator.',
         'agent_policy_not_configured' => 'Commission policy has not been configured. Please contact administrator.',
     ],
