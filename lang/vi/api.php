@@ -9,6 +9,7 @@ return [
         'invalid_credentials' => 'Thông tin đăng nhập không hợp lệ.',
         'login_success' => 'Đăng nhập thành công.',
         'logout_success' => 'Đăng xuất thành công.',
+        'account_not_found' => 'Tài khoản không tồn tại.',
         'account_not_activated' => 'Tài khoản chưa được kích hoạt, vui lòng liên hệ quản trị viên.',
         'agent_policy_not_configured' => 'Chưa được thiết lập chính sách hoa hồng, vui lòng liên hệ quản trị viên.',
     ],
