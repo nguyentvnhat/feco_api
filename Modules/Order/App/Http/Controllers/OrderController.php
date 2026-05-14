@@ -5,10 +5,13 @@ namespace Modules\Order\App\Http\Controllers;
 use App\Http\Controllers\BaseApiController;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Modules\Order\App\Http\Requests\PreviewOrderRequest;
 use Modules\Order\App\Http\Requests\StoreOrderRequest;
 use Modules\Order\App\Http\Requests\UpdateOrderRequest;
+use Modules\Order\App\Services\OrderPricingService;
 use Modules\Order\Enums\OrderStatus;
 use Modules\Order\Models\Order;
 use Modules\Order\Models\OrderAddress;
@@ -22,6 +25,11 @@ use Modules\Order\Models\OrderItem;
  */
 class OrderController extends BaseApiController
 {
+    public function __construct(
+        private readonly OrderPricingService $orderPricingService,
+    ) {
+    }
+
     public function statuses(): JsonResponse
     {
         $statuses = collect(OrderStatus::values())
@@ -225,6 +233,56 @@ class OrderController extends BaseApiController
         ]);
     }
 
+    public function preview(PreviewOrderRequest $request): JsonResponse
+    {
+        $user = $request->user();
+        if (! $user) {
+            return $this->errorResponse('api.auth.invalid_credentials', 401, (object) []);
+        }
+
+        $agentProfileId = (int) (DB::table('agent_profiles')->where('user_id', $user->id)->value('id') ?? 0);
+        if ($agentProfileId <= 0) {
+            return $this->errorResponse('api.order.preview_no_agent_profile', 422, (object) []);
+        }
+
+        $catalogAgentId = (int) (DB::table('agents')->where('user_id', $user->id)->value('id') ?? 0);
+        if ($catalogAgentId <= 0) {
+            return $this->errorResponse('api.agent.current_agent_not_found', 422, (object) []);
+        }
+
+        $validated = $request->validated();
+        $requestedProducts = collect($validated['products'] ?? [])
+            ->map(fn ($row) => [
+                'product_id' => (int) ($row['product_id'] ?? 0),
+                'quantity' => (float) ($row['quantity'] ?? 0),
+            ])
+            ->filter(fn ($row) => $row['product_id'] > 0 && $row['quantity'] > 0)
+            ->values();
+
+        $catalogProducts = $this->catalogProductsByAgentId($catalogAgentId)->keyBy('id');
+        $built = $this->buildOrderLinesFromCatalog($catalogProducts, $requestedProducts);
+        if (isset($built['errors'])) {
+            return $this->validationErrorResponse($built['errors']);
+        }
+
+        if ($built['subtotal'] <= 0) {
+            return $this->validationErrorResponse([
+                'products' => ['Đơn hàng 0đ không hợp lệ. Vui lòng kiểm tra giá và số lượng sản phẩm.'],
+            ]);
+        }
+
+        $orderDate = now();
+        $pricing = $this->orderPricingService->buildPricingPayload(
+            $agentProfileId,
+            $orderDate->toDateString(),
+            $orderDate->format('Y-m'),
+            $built['lines'],
+            null,
+        );
+
+        return $this->successResponse('api.order.preview_success', $this->formatOrderPricingApiData($pricing));
+    }
+
     /**
      * Store: header đơn + địa chỉ giao + dòng hàng products[] và tự tính tiền.
      */
@@ -233,7 +291,7 @@ class OrderController extends BaseApiController
         $validated = $request->validated();
         $generatedOrderNo = $this->generateUniqueOrderNoFromCurrentUserAgentCode();
 
-        if (!$generatedOrderNo) {
+        if (! $generatedOrderNo) {
             return $this->errorResponse('api.order.agent_code_not_found', 422, (object) []);
         }
 
@@ -258,40 +316,75 @@ class OrderController extends BaseApiController
             : 0;
         $catalogProducts = $this->catalogProductsByAgentId($catalogAgentId > 0 ? $catalogAgentId : null)
             ->keyBy('id');
-        $orderItemsPayload = [];
-        $subtotal = 0.0;
-        foreach ($requestedProducts as $row) {
-            $product = $catalogProducts->get($row['product_id']);
-            if (! $product) {
-                return $this->validationErrorResponse([
-                    'products' => ["Sản phẩm #{$row['product_id']} không thuộc danh mục được phép đặt."],
-                ]);
-            }
 
-            $quantity = (float) $row['quantity'];
-            $unitPrice = (float) ($product->unit_price ?? 0);
-            $lineAmount = round($unitPrice * $quantity, 2);
-            $subtotal += $lineAmount;
-
-            $orderItemsPayload[] = [
-                'product_id' => (int) $product->id,
-                'product_name_snapshot' => (string) ($product->name ?? ''),
-                'unit' => (string) ($product->base_unit ?? ''),
-                'quantity' => $quantity,
-                'quantity_in_base_unit' => $quantity,
-                'unit_price' => $unitPrice,
-                'line_amount' => $lineAmount,
-            ];
+        $built = $this->buildOrderLinesFromCatalog($catalogProducts, $requestedProducts);
+        if (isset($built['errors'])) {
+            return $this->validationErrorResponse($built['errors']);
         }
 
-        if ($subtotal <= 0) {
+        if ($built['subtotal'] <= 0) {
             return $this->validationErrorResponse([
                 'products' => ['Đơn hàng 0đ không hợp lệ. Vui lòng kiểm tra giá và số lượng sản phẩm.'],
             ]);
         }
 
-        $discountAmount = 0.0;
-        $netAmount = $subtotal - $discountAmount;
+        $resolvedAgentProfileId = auth()->id()
+            ? (int) (DB::table('agent_profiles')->where('user_id', auth()->id())->value('id') ?? 0)
+            : 0;
+        if (($validated['order_channel'] ?? '') === 'agent_order' && $resolvedAgentProfileId > 0) {
+            $validated['agent_profile_id'] = $resolvedAgentProfileId;
+        }
+
+        $pricing = null;
+        if (($validated['order_channel'] ?? '') === 'agent_order' && $resolvedAgentProfileId > 0) {
+            $pricing = $this->orderPricingService->buildPricingPayload(
+                $resolvedAgentProfileId,
+                $orderDate->toDateString(),
+                $orderDate->format('Y-m'),
+                $built['lines'],
+                null,
+            );
+        }
+
+        $subtotal = $pricing !== null
+            ? (float) $pricing['summary']['subtotal_amount']
+            : (float) $built['subtotal'];
+        $discountAmount = $pricing !== null
+            ? (float) $pricing['summary']['discount_amount']
+            : 0.0;
+        $netAmount = $pricing !== null
+            ? (float) $pricing['summary']['net_amount']
+            : $subtotal;
+
+        $orderItemsPayload = array_map(static function (array $line) {
+            return [
+                'product_id' => (int) $line['product_id'],
+                'product_name_snapshot' => (string) ($line['product_name'] ?? ''),
+                'unit' => (string) ($line['unit'] ?? ''),
+                'quantity' => (float) $line['quantity'],
+                'quantity_in_base_unit' => (float) ($line['quantity_in_base_unit'] ?? $line['quantity']),
+                'unit_price' => (float) $line['unit_price'],
+                'line_amount' => (float) $line['line_amount'],
+            ];
+        }, $built['lines']);
+
+        $mergeAmounts = [
+            'order_no' => $generatedOrderNo,
+            'order_date' => $orderDate,
+            'order_month' => $orderDate->format('Y-m'),
+            'subtotal_amount' => $subtotal,
+            'discount_amount' => $discountAmount,
+            'net_amount' => $netAmount,
+        ];
+
+        if ($pricing !== null) {
+            $mergeAmounts['applied_discount_policy_id'] = $pricing['applied_discount_policy_id'];
+            $mergeAmounts['monthly_qty_before'] = $pricing['monthly_qty_before'];
+            $mergeAmounts['monthly_qty_after'] = $pricing['monthly_qty_after'];
+            if ($pricing['discount_snapshot_json'] !== null) {
+                $mergeAmounts['discount_snapshot_json'] = $pricing['discount_snapshot_json'];
+            }
+        }
 
         $payload = collect($validated)
             ->except([
@@ -301,17 +394,10 @@ class OrderController extends BaseApiController
                 'customer_ward_code',
                 'products',
             ])
-            ->merge([
-                'order_no' => $generatedOrderNo,
-                'order_date' => $orderDate,
-                'order_month' => $orderDate->format('Y-m'),
-                'subtotal_amount' => $subtotal,
-                'discount_amount' => $discountAmount,
-                'net_amount' => $netAmount,
-            ])
+            ->merge($mergeAmounts)
             ->all();
 
-        $order = DB::transaction(function () use ($payload, $orderItemsPayload, $addressAttrs) {
+        $order = DB::transaction(function () use ($payload, $orderItemsPayload, $addressAttrs, $pricing) {
             $order = Order::query()->create($payload);
             $items = collect($orderItemsPayload)
                 ->map(fn ($item) => new OrderItem($item))
@@ -326,6 +412,12 @@ class OrderController extends BaseApiController
             );
             $this->upsertDefaultPickupAddressFromShipping($order, $addressAttrs);
             $order->syncLegacyCustomerColumnsFromShippingAddress();
+
+            if ($pricing !== null
+                && ($pricing['breakdown_rows'] ?? []) !== []
+                && Schema::hasTable('order_discount_breakdowns')) {
+                $this->orderPricingService->persistDiscountBreakdowns($order->id, $pricing['breakdown_rows']);
+            }
 
             return $order->fresh(['shippingAddress', 'latestShipment']);
         });
@@ -581,6 +673,86 @@ class OrderController extends BaseApiController
                 ];
             })
             ->values();
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int|string, object>  $catalogProducts
+     * @param  \Illuminate\Support\Collection<int, array{product_id:int, quantity:float}>  $requestedProducts
+     * @return array{lines: list<array<string, mixed>>, subtotal: float}|array{errors: array<string, list<string>>}
+     */
+    private function buildOrderLinesFromCatalog(Collection $catalogProducts, Collection $requestedProducts): array
+    {
+        $lines = [];
+        $subtotal = 0.0;
+        foreach ($requestedProducts as $row) {
+            $product = $catalogProducts->get($row['product_id']);
+            if (! $product) {
+                return [
+                    'errors' => [
+                        'products' => ["Sản phẩm #{$row['product_id']} không thuộc danh mục được phép đặt."],
+                    ],
+                ];
+            }
+
+            $quantity = (float) $row['quantity'];
+            $unitPrice = (float) ($product->unit_price ?? 0);
+            $lineAmount = round($unitPrice * $quantity, 2);
+            $subtotal += $lineAmount;
+
+            $lines[] = [
+                'product_id' => (int) $product->id,
+                'product_name' => (string) ($product->name ?? ''),
+                'unit' => (string) ($product->base_unit ?? ''),
+                'quantity' => $quantity,
+                'quantity_in_base_unit' => $quantity,
+                'unit_price' => $unitPrice,
+                'line_amount' => $lineAmount,
+            ];
+        }
+
+        return ['lines' => $lines, 'subtotal' => $subtotal];
+    }
+
+    /**
+     * @param  array<string, mixed>  $pricing
+     * @return array<string, mixed>
+     */
+    private function formatOrderPricingApiData(array $pricing): array
+    {
+        return [
+            'policy' => $pricing['policy'],
+            'monthly_context' => $pricing['monthly_context'],
+            'items' => collect($pricing['items'] ?? [])->map(function (array $row) {
+                return [
+                    'product_id' => $row['product_id'],
+                    'product_name' => $row['product_name'],
+                    'unit' => $row['unit'],
+                    'quantity' => $row['quantity'],
+                    'quantity_in_base_unit' => $row['quantity_in_base_unit'],
+                    'unit_price' => $this->formatVietnameseMoney($row['unit_price']),
+                    'line_amount' => $this->formatVietnameseMoney($row['line_amount']),
+                    'currency' => $this->vietnameseMoneyCurrency(),
+                ];
+            })->values()->all(),
+            'applied_tiers' => collect($pricing['applied_tiers'] ?? [])->map(function (array $t) {
+                return [
+                    'commission_policy_id' => $t['commission_policy_id'],
+                    'commission_policy_tier_id' => $t['commission_policy_tier_id'],
+                    'qty_from' => $t['qty_from'],
+                    'qty_to' => $t['qty_to'],
+                    'applied_qty' => $t['applied_qty'],
+                    'reward_percent' => $t['reward_percent'],
+                    'basis_amount' => $this->formatVietnameseMoney($t['basis_amount']),
+                    'discount_amount' => $this->formatVietnameseMoney($t['discount_amount']),
+                ];
+            })->values()->all(),
+            'summary' => [
+                'subtotal_amount' => $this->formatVietnameseMoney($pricing['summary']['subtotal_amount']),
+                'discount_amount' => $this->formatVietnameseMoney($pricing['summary']['discount_amount']),
+                'net_amount' => $this->formatVietnameseMoney($pricing['summary']['net_amount']),
+                'currency' => $this->vietnameseMoneyCurrency(),
+            ],
+        ];
     }
 
     private function catalogProductsByAgentId(?int $agentId)

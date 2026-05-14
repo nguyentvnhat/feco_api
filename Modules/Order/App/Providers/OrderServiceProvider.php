@@ -29,6 +29,7 @@ class OrderServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        $this->app->singleton(\Modules\Order\App\Services\OrderPricingService::class);
         $this->app->register(RouteServiceProvider::class);
     }
 

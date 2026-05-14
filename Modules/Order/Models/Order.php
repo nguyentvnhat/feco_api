@@ -26,6 +26,10 @@ class Order extends Model
         'order_status',
         'subtotal_amount',
         'discount_amount',
+        'applied_discount_policy_id',
+        'monthly_qty_before',
+        'monthly_qty_after',
+        'discount_snapshot_json',
         'net_amount',
         'notes',
         'invoice_file_path',
@@ -38,7 +42,10 @@ class Order extends Model
         'subtotal_amount' => 'decimal:2',
         'discount_amount' => 'decimal:2',
         'net_amount' => 'decimal:2',
+        'monthly_qty_before' => 'decimal:4',
+        'monthly_qty_after' => 'decimal:4',
         'delivery_receipt_paths' => 'array',
+        'discount_snapshot_json' => 'array',
     ];
 
     public function seller(): BelongsTo
