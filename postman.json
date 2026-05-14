@@ -177,8 +177,10 @@
                   "    if (res.data.agent) {",
                   "        pm.expect(res.data.agent).to.have.property('month_revenue');",
                   "        pm.expect(res.data.agent).to.have.property('month_commission');",
+                  "        pm.expect(res.data.agent).to.have.property('has_agent_children');",
                   "        pm.expect(res.data.agent.month_revenue).to.be.a('string');",
                   "        pm.expect(res.data.agent.month_commission).to.be.a('string');",
+                  "        pm.expect(res.data.agent.has_agent_children).to.be.a('boolean');",
                   "    }",
                   "});",
                   "",
@@ -265,7 +267,7 @@
           }
         ]
       },
-      "description": "Basic endpoints mapped from OrderController methods (show/store/update).",
+      "description": "OrderController: list, statuses, create metadata, show, preview (tier discount), store, update.",
       "item": [
         {
           "name": "List My Orders",
@@ -483,6 +485,64 @@
                   "    if (Array.isArray(res.data.products) && res.data.products.length > 0) {",
                   "        pm.expect(res.data.products[0]).to.have.property('image_path');",
                   "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Preview Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"order_channel\": \"agent_order\",\n  \"products\": [\n    { \"product_id\": 1, \"quantity\": 70 }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders/preview",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "preview"
+              ]
+            },
+            "description": "POST JSON. Không tạo đơn; trả policy, monthly_context, items, applied_tiers, summary (tiền format VND). Bearer bắt buộc; agent_profile lấy từ user đăng nhập."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Preview order status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Response has pricing shape', function () {",
+                  "    pm.expect(res).to.have.property('success', true);",
+                  "    pm.expect(res.data).to.have.property('summary');",
+                  "    pm.expect(res.data.summary).to.have.property('subtotal_amount');",
+                  "    pm.expect(res.data.summary).to.have.property('discount_amount');",
+                  "    pm.expect(res.data.summary).to.have.property('net_amount');",
+                  "    pm.expect(res.data).to.have.property('items');",
+                  "    pm.expect(res.data).to.have.property('applied_tiers');",
+                  "    pm.expect(res.data).to.have.property('monthly_context');",
                   "});"
                 ]
               }

@@ -9,6 +9,7 @@ return [
         'invalid_credentials' => 'Thông tin đăng nhập không hợp lệ.',
         'login_success' => 'Đăng nhập thành công.',
         'logout_success' => 'Đăng xuất thành công.',
+        'account_not_found' => 'Tài khoản không tồn tại.',
         'account_not_activated' => 'Tài khoản chưa được kích hoạt, vui lòng liên hệ quản trị viên.',
         'agent_policy_not_configured' => 'Chưa được thiết lập chính sách hoa hồng, vui lòng liên hệ quản trị viên.',
     ],
@@ -20,6 +21,8 @@ return [
         'statuses_success' => 'Lấy danh sách trạng thái đơn hàng thành công.',
         'store_success' => 'Tạo đơn hàng thành công.',
         'update_success' => 'Cập nhật đơn hàng thành công.',
+        'preview_success' => 'Xem trước đơn hàng thành công.',
+        'preview_no_agent_profile' => 'Tài khoản chưa có hồ sơ đại lý để áp dụng chiết khấu.',
         'agent_code_not_found' => 'Không tìm thấy mã đại lý của người dùng hiện tại để tạo mã đơn hàng.',
     ],
     'agent' => [
