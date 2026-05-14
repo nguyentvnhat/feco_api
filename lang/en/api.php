@@ -21,6 +21,8 @@ return [
         'statuses_success' => 'Order status list loaded successfully.',
         'store_success' => 'Order created successfully.',
         'update_success' => 'Order updated successfully.',
+        'preview_success' => 'Order preview generated successfully.',
+        'preview_no_agent_profile' => 'This account has no agent profile for discount preview.',
         'agent_code_not_found' => 'Current user agent code was not found for order number generation.',
     ],
     'agent' => [

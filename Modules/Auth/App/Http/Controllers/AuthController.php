@@ -125,6 +125,7 @@ class AuthController extends BaseApiController
                 'month_revenue' => $this->formatVietnameseMoney($monthRevenue),
                 'month_commission' => $this->formatVietnameseMoney($monthCommission),
                 'currency' => $this->vietnameseMoneyCurrency(),
+                'has_agent_children' => $this->hasAgentChildren((int) $agent->id),
                 'agent_commission_policy' => $agentCommissionPolicy->values(),
             ] : null,
         ]);
@@ -453,6 +454,17 @@ class AuthController extends BaseApiController
         return DB::table('agents')
             ->where('user_id', $userId)
             ->whereNotNull('deleted_at')
+            ->exists();
+    }
+
+    private function hasAgentChildren(int $agentId): bool
+    {
+        if (! Schema::hasTable('agents') || ! Schema::hasColumn('agents', 'parent_agent_id')) {
+            return false;
+        }
+
+        return DB::table('agents')
+            ->where('parent_agent_id', $agentId)
             ->exists();
     }
 }
