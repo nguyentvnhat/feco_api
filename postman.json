@@ -273,6 +273,7 @@
           "name": "List My Orders",
           "request": {
             "method": "GET",
+            "description": "Danh sách đơn của đại lý đăng nhập theo agent_profile_id (gồm đơn tạo từ admin). Chỉ fallback seller_user_id nếu tài khoản không có hồ sơ đại lý.",
             "header": [
               {
                 "key": "Accept",
@@ -341,7 +342,7 @@
           "name": "Search Orders",
           "request": {
             "method": "GET",
-            "description": "Tìm đơn của user đăng nhập theo từ khóa (order_no, tên KH, SĐT…). Query **q** bắt buộc; **limit** tùy chọn (1–100).",
+            "description": "Tìm đơn của đại lý đăng nhập (cùng phạm vi agent_profile_id như List My Orders). Query **q** bắt buộc; **limit** / **page** tùy chọn.",
             "header": [
               {
                 "key": "Accept",

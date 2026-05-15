@@ -142,15 +142,15 @@ class OrderController extends BaseApiController
     {
         $userId = auth()->id();
 
-        $limitParam = $request->query('limit');
-        $limit = is_numeric($limitParam) ? (int) $limitParam : null;
-        if ($limit !== null) {
-            $limit = max(1, min($limit, 100));
-        }
-
-        return $this->successResponse('api.order.index_success', [
-            'orders' => $this->buildOrdersListPayload($userId, $limit),
+        $validated = $request->validate([
+            'limit' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'page' => ['nullable', 'integer', 'min:1'],
         ]);
+
+        $limit = isset($validated['limit']) ? (int) $validated['limit'] : null;
+        $page = isset($validated['page']) ? (int) $validated['page'] : 1;
+
+        return $this->successResponse('api.order.index_success', $this->buildOrdersListPayload($userId, $limit, null, $page));
     }
 
     public function search(Request $request): JsonResponse
@@ -158,15 +158,15 @@ class OrderController extends BaseApiController
         $validated = $request->validate([
             'q' => ['required', 'string'],
             'limit' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'page' => ['nullable', 'integer', 'min:1'],
         ]);
 
         $userId = auth()->id();
         $keyword = (string) ($validated['q'] ?? '');
         $limit = isset($validated['limit']) ? (int) $validated['limit'] : null;
+        $page = isset($validated['page']) ? (int) $validated['page'] : 1;
 
-        return $this->successResponse('api.order.index_success', [
-            'orders' => $this->buildOrdersListPayload($userId, $limit, $keyword),
-        ]);
+        return $this->successResponse('api.order.index_success', $this->buildOrdersListPayload($userId, $limit, $keyword, $page));
     }
 
     public function create(): JsonResponse
@@ -688,14 +688,43 @@ class OrderController extends BaseApiController
     }
 
     /**
-     * @return \Illuminate\Support\Collection<int, array<string, mixed>>
+     * Đơn thuộc đại lý đang đăng nhập: ưu tiên {@see Order::agent_profile_id}
+     * (gồm đơn tạo từ admin), fallback {@see Order::seller_user_id} nếu không có hồ sơ đại lý.
+     *
+     * @param  \Illuminate\Database\Eloquent\Builder<Order>  $query
      */
-    private function buildOrdersListPayload(?int $userId, ?int $limit = null, ?string $keyword = null)
+    private function applyAuthenticatedAgentOrdersScope($query, ?int $userId): void
+    {
+        if ($userId === null) {
+            $query->whereRaw('1 = 0');
+
+            return;
+        }
+
+        $agentProfileId = null;
+        if (Schema::hasTable('agent_profiles') && Schema::hasColumn('agent_profiles', 'user_id')) {
+            $agentProfileId = DB::table('agent_profiles')->where('user_id', $userId)->value('id');
+        }
+
+        if ($agentProfileId !== null && Schema::hasColumn('orders', 'agent_profile_id')) {
+            $query->where('agent_profile_id', (int) $agentProfileId);
+
+            return;
+        }
+
+        $query->where('seller_user_id', $userId);
+    }
+
+    /**
+     * @return array{orders: \Illuminate\Support\Collection<int, array<string, mixed>>, meta?: array{page: int, per_page: int, total: int, has_more: bool}}
+     */
+    private function buildOrdersListPayload(?int $userId, ?int $limit = null, ?string $keyword = null, int $page = 1)
     {
         $query = Order::query()
             ->with(['shippingAddress', 'items'])
-            ->where('seller_user_id', $userId)
             ->latest('id');
+
+        $this->applyAuthenticatedAgentOrdersScope($query, $userId);
 
         $normalizedKeyword = trim((string) $keyword);
         if ($normalizedKeyword !== '') {
@@ -708,8 +737,17 @@ class OrderController extends BaseApiController
             });
         }
 
+        $meta = null;
         if ($limit !== null) {
-            $query->limit($limit);
+            $page = max(1, $page);
+            $total = (clone $query)->count();
+            $query->offset(($page - 1) * $limit)->limit($limit);
+            $meta = [
+                'page' => $page,
+                'per_page' => $limit,
+                'total' => $total,
+                'has_more' => ($page * $limit) < $total,
+            ];
         }
 
         $ordersCollection = $query->get();
@@ -726,7 +764,7 @@ class OrderController extends BaseApiController
             )
             ->pluck('image_path', 'id');
 
-        return $ordersCollection
+        $orders = $ordersCollection
             ->map(function (Order $order) use ($productImagePathsById) {
                 $customer = $order->legacyCustomerAddressForApi();
 
@@ -762,6 +800,13 @@ class OrderController extends BaseApiController
                 ];
             })
             ->values();
+
+        $payload = ['orders' => $orders];
+        if ($meta !== null) {
+            $payload['meta'] = $meta;
+        }
+
+        return $payload;
     }
 
     /**
