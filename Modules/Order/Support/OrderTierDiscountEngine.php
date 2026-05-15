@@ -3,14 +3,12 @@
 namespace Modules\Order\Support;
 
 /**
- * Progressive / flat tier discount on quantity ladder (shared by preview + store).
+ * Tier discount theo **số lượng** (min_value / max_value trên commission_policy_tiers).
  *
- * Progressive: split current-order quantity across tiers by absolute position
- * (monthly_qty_before + 1 .. monthly_qty_before + current_qty), allocate subtotal
- * proportionally by applied_qty / current_qty per slice (same as admin progressive).
+ * Progressive: chia số lượng đơn hiện tại theo nấc (có thể gồm nhiều dòng sản phẩm); mỗi nấc
+ * discount = (tổng đơn giá×số lượng thuộc nấc đó) × reward_percent / 100.
  *
- * Flat: pick single tier containing the ending position; apply that tier's percent once
- * to the full order subtotal.
+ * Flat: chọn một nấc theo vị trí kết thúc cộng dồn; discount = subtotal × reward_percent / 100.
  */
 final class OrderTierDiscountEngine
 {
@@ -19,6 +17,7 @@ final class OrderTierDiscountEngine
     private const TIER_MAX_INFINITY = '999999999999999.9999';
 
     /**
+     * @param  list<array{quantity_in_base_unit?:string|float|int|null, quantity?:string|float|int|null, unit_price?:string|float|int|null}>  $lines
      * @param  list<array{id:int,min_value:?string,max_value:?string,reward_percent:?string}>  $tiers
      * @return array{
      *     breakdowns: list<array{
@@ -36,16 +35,17 @@ final class OrderTierDiscountEngine
      *     net_amount: string
      * }
      */
-    public static function computeProgressivePercent(
+    public static function computeProgressivePercentFromLines(
         int $commissionPolicyId,
         string $monthlyQtyBefore,
         string $currentOrderQty,
-        string $subtotal,
+        string $subtotalBc,
         array $tiers,
         string $monthlyQtyAfter,
+        array $lines,
     ): array {
         if (bccomp($currentOrderQty, '0', 4) <= 0 || $tiers === []) {
-            return self::emptyResult($subtotal);
+            return self::emptyResult($subtotalBc);
         }
 
         $sliceStart = self::bcAdd($monthlyQtyBefore, '1', 4);
@@ -74,23 +74,23 @@ final class OrderTierDiscountEngine
 
             $appliedQty = self::bcAdd(self::bcSub($overlapEnd, $overlapStart, 4), '1', 4);
 
-            $tierBasis = '0';
-            if (bccomp($currentOrderQty, '0', 4) > 0) {
-                $tierBasis = bcdiv(
-                    bcmul(self::toBc($subtotal, '2'), $appliedQty, self::BC + 4),
-                    $currentOrderQty,
-                    self::BC
-                );
+            $kStart = self::bcSub($overlapStart, $monthlyQtyBefore, 4);
+            $kEnd = self::bcSub($overlapEnd, $monthlyQtyBefore, 4);
+            $kStart = self::bcMax($kStart, '1', 4);
+            $kEnd = self::bcMin($kEnd, $currentOrderQty, 4);
+            if (bccomp($kStart, $kEnd, 4) > 0) {
+                continue;
             }
 
+            $tierBasisRaw = self::basisMoneyForOrderUnitInterval($lines, $kStart, $kEnd);
             $pct = self::toBc((string) $rewardPercent, '4');
             $discountLine = bcdiv(
-                bcmul($tierBasis, $pct, self::BC + 4),
+                bcmul($tierBasisRaw, $pct, self::BC + 4),
                 '100',
                 self::BC
             );
 
-            $tierBasisRounded = self::moneyFormat2($tierBasis);
+            $tierBasisRounded = self::moneyFormat2($tierBasisRaw);
             $discountLineRounded = self::moneyFormat2($discountLine);
             $totalDiscountSum = bcadd($totalDiscountSum, $discountLineRounded, 2);
 
@@ -113,12 +113,13 @@ final class OrderTierDiscountEngine
                         ? self::qtyFormat4($tierMax)
                         : null,
                     'calculation_method' => 'progressive',
+                    'basis_rule' => 'unit_price_times_quantity_in_tier',
                 ],
             ];
         }
 
         $totalDiscountRounded = self::moneyFormat2($totalDiscountSum);
-        $netBc = bcsub(self::toBc($subtotal, '2'), self::toBc($totalDiscountRounded, '2'), self::BC);
+        $netBc = bcsub(self::toBc($subtotalBc, '2'), self::toBc($totalDiscountRounded, '2'), self::BC);
 
         return [
             'breakdowns' => $breakdowns,
@@ -135,16 +136,16 @@ final class OrderTierDiscountEngine
      *     net_amount: string
      * }
      */
-    public static function computeFlatPercent(
+    public static function computeFlatPercentFromLines(
         int $commissionPolicyId,
         string $monthlyQtyBefore,
         string $currentOrderQty,
-        string $subtotal,
+        string $subtotalBc,
         array $tiers,
         string $monthlyQtyAfter,
     ): array {
         if (bccomp($currentOrderQty, '0', 4) <= 0 || $tiers === []) {
-            return self::emptyResult($subtotal);
+            return self::emptyResult($subtotalBc);
         }
 
         $sliceStart = self::bcAdd($monthlyQtyBefore, '1', 4);
@@ -164,21 +165,21 @@ final class OrderTierDiscountEngine
         }
 
         if ($selected === null) {
-            return self::emptyResult($subtotal);
+            return self::emptyResult($subtotalBc);
         }
 
         $pct = self::toBc((string) ($selected['reward_percent'] ?? '0'), '4');
         if (bccomp($pct, '0', 4) <= 0) {
-            return self::emptyResult($subtotal);
+            return self::emptyResult($subtotalBc);
         }
 
         $discountLine = bcdiv(
-            bcmul(self::toBc($subtotal, '2'), $pct, self::BC + 4),
+            bcmul(self::toBc($subtotalBc, '2'), $pct, self::BC + 4),
             '100',
             self::BC
         );
         $discountRounded = self::moneyFormat2($discountLine);
-        $netBc = bcsub(self::toBc($subtotal, '2'), self::toBc($discountRounded, '2'), self::BC);
+        $netBc = bcsub(self::toBc($subtotalBc, '2'), self::toBc($discountRounded, '2'), self::BC);
 
         $breakdowns = [[
             'commission_policy_id' => $commissionPolicyId,
@@ -187,7 +188,7 @@ final class OrderTierDiscountEngine
             'qty_to' => self::qtyFormat4($sliceEnd),
             'applied_qty' => self::qtyFormat4($currentOrderQty),
             'reward_percent' => self::moneyFormat2($pct),
-            'basis_amount' => self::moneyFormat2($subtotal),
+            'basis_amount' => self::moneyFormat2($subtotalBc),
             'discount_amount' => $discountRounded,
             'snapshot_json' => [
                 'monthly_qty_before' => self::qtyFormat4($monthlyQtyBefore),
@@ -199,6 +200,7 @@ final class OrderTierDiscountEngine
                     ? self::qtyFormat4($selected['_tier_max'])
                     : null,
                 'calculation_method' => 'flat',
+                'basis_rule' => 'order_subtotal',
             ],
         ]];
 
@@ -207,6 +209,45 @@ final class OrderTierDiscountEngine
             'total_discount_amount' => $discountRounded,
             'net_amount' => self::moneyFormat2($netBc),
         ];
+    }
+
+    /**
+     * Tiền gốc (chưa chiết khấu) của các **đơn vị** thứ kStart..kEnd trong giỏ (đếm từ 1 theo thứ tự dòng sản phẩm).
+     *
+     * @param  list<array{quantity_in_base_unit?:string|float|int|null, quantity?:string|float|int|null, unit_price?:string|float|int|null}>  $lines
+     */
+    private static function basisMoneyForOrderUnitInterval(array $lines, string $kStart, string $kEnd): string
+    {
+        if (bccomp($kStart, $kEnd, 4) > 0) {
+            return '0';
+        }
+
+        $cum = '0';
+        $basis = '0';
+
+        foreach ($lines as $line) {
+            $q = self::toBc((string) ($line['quantity_in_base_unit'] ?? $line['quantity'] ?? '0'), '4');
+            $p = self::toBc((string) ($line['unit_price'] ?? '0'), '2');
+            if (bccomp($q, '0', 4) <= 0) {
+                continue;
+            }
+
+            $lineStart = self::bcAdd($cum, '1', 4);
+            $lineEnd = self::bcAdd($cum, $q, 4);
+
+            $ovS = self::bcMax($kStart, $lineStart, 4);
+            $ovE = self::bcMin($kEnd, $lineEnd, 4);
+
+            if (bccomp($ovS, $ovE, 4) <= 0) {
+                $units = self::bcAdd(self::bcSub($ovE, $ovS, 4), '1', 4);
+                $lineBasis = bcmul($p, $units, self::BC + 4);
+                $basis = bcadd($basis, $lineBasis, self::BC);
+            }
+
+            $cum = self::bcAdd($cum, $q, 4);
+        }
+
+        return $basis;
     }
 
     /**

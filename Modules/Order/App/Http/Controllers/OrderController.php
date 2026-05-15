@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\Rule;
 use Modules\Order\App\Http\Requests\PreviewOrderRequest;
 use Modules\Order\App\Http\Requests\StoreOrderRequest;
 use Modules\Order\App\Http\Requests\UpdateOrderRequest;
@@ -44,79 +45,96 @@ class OrderController extends BaseApiController
         ]);
     }
 
-    public function historyCommission(): JsonResponse
+    public function historyCommission(Request $request): JsonResponse
     {
-        $userId = auth()->id();
-        if (! $userId) {
-            return $this->successResponse('api.order.history_commission_success', [
-                'orders' => [],
-            ]);
+        $user = $request->user();
+        if (! $user) {
+            return $this->errorResponse('api.auth.invalid_credentials', 401, (object) []);
         }
 
-        if (! Schema::hasTable('commission_entries') || ! Schema::hasTable('commission_policies')) {
-            return $this->successResponse('api.order.history_commission_success', [
-                'orders' => [],
-            ]);
+        $validated = $request->validate([
+            'month' => ['nullable', 'date_format:Y-m'],
+            'status' => ['nullable', Rule::in(['pending', 'approved', 'paid', 'rejected'])],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        if (! Schema::hasTable('agent_profiles')) {
+            return $this->errorResponse('api.order.history_commission_no_agent_profile', 422, (object) []);
         }
 
-        $rows = DB::table('orders')
-            ->join('commission_entries', 'commission_entries.source_order_id', '=', 'orders.id')
-            ->leftJoin('commission_policies', 'commission_policies.id', '=', 'commission_entries.policy_id')
-            ->where('orders.seller_user_id', $userId)
-            ->where('orders.order_status', OrderStatus::DELIVERED->value)
-            ->orderByDesc('orders.id')
-            ->orderByDesc('commission_entries.id')
+        $agentProfile = DB::table('agent_profiles')
+            ->where('user_id', $user->id)
+            ->first(['id', 'user_id']);
+
+        if ($agentProfile === null) {
+            return $this->errorResponse('api.order.history_commission_no_agent_profile', 422, (object) []);
+        }
+
+        $beneficiaryUserId = (int) $agentProfile->user_id;
+        $periodMonth = (string) ($validated['month'] ?? now()->format('Y-m'));
+        $limit = isset($validated['limit']) ? (int) $validated['limit'] : 20;
+        $statusFilter = isset($validated['status']) ? (string) $validated['status'] : null;
+
+        $emptyPayload = [
+            'period_month' => $periodMonth,
+            'summary' => $this->formatCommissionHistorySummary(collect()),
+            'entries' => [],
+        ];
+
+        if (! Schema::hasTable('commission_entries')) {
+            return $this->successResponse('api.order.history_commission_success', $emptyPayload);
+        }
+
+        $baseQuery = DB::table('commission_entries as ce')
+            ->leftJoin('orders as o', 'o.id', '=', 'ce.source_order_id')
+            ->where('ce.beneficiary_user_id', $beneficiaryUserId)
+            ->where('ce.entry_type', '!=', 'discount');
+
+        $this->applyCommissionHistoryMonthFilter($baseQuery, $periodMonth);
+
+        if ($statusFilter !== null) {
+            $baseQuery->where('ce.settlement_status', $statusFilter);
+        }
+
+        $summaryRows = (clone $baseQuery)->get([
+            'ce.amount',
+            'ce.settlement_status',
+        ]);
+
+        $entryRows = (clone $baseQuery)
+            ->orderByDesc('ce.id')
+            ->limit($limit)
             ->get([
-                'orders.id as order_id',
-                'orders.order_no',
-                'orders.order_date',
-                'orders.order_status',
-                'orders.net_amount',
-                'commission_entries.id as commission_entry_id',
-                'commission_entries.entry_type',
-                'commission_entries.amount as commission_amount',
-                'commission_entries.rate_percent',
-                'commission_entries.basis_type',
-                'commission_entries.basis_value',
-                'commission_entries.settlement_status',
-                'commission_policies.policy_code',
-                'commission_policies.policy_name',
+                'ce.id',
+                'ce.source_order_id as order_id',
+                'o.order_no',
+                'ce.amount',
+                'ce.rate_percent',
+                'ce.basis_type',
+                'ce.basis_value',
+                'ce.settlement_status',
+                'ce.created_at',
             ]);
 
-        $orders = $rows
-            ->groupBy('order_id')
-            ->map(function ($items) {
-                $first = $items->first();
-
-                return [
-                    'id' => (int) $first->order_id,
-                    'order_no' => $first->order_no,
-                    'order_date' => $first->order_date,
-                    'order_status' => (string) $first->order_status,
-                    'order_label_status' => OrderStatus::orderLabelStatusForValue((string) $first->order_status),
-                    'net_amount' => $this->formatVietnameseMoney($first->net_amount),
-                    'currency' => $this->vietnameseMoneyCurrency(),
-                    'commissions' => collect($items)->map(function ($row) {
-                        return [
-                            'id' => (int) $row->commission_entry_id,
-                            'entry_type' => $row->entry_type,
-                            'policy_code' => $row->policy_code,
-                            'policy_name' => $row->policy_name,
-                            'amount' => $this->formatVietnameseMoney($row->commission_amount),
-                            'rate_percent' => $row->rate_percent !== null ? (float) $row->rate_percent : null,
-                            'basis_type' => $row->basis_type,
-                            'basis_value' => $this->formatVietnameseMoney($row->basis_value),//(float) $row->basis_value,
-                            'settlement_status' => $row->settlement_status,
-                            'settlement_status_label_vi' => $this->commissionSettlementStatusLabelVi((string) $row->settlement_status),
-                            'currency' => $this->vietnameseMoneyCurrency(),
-                        ];
-                    })->values(),
-                ];
-            })
-            ->values();
+        $entries = $entryRows->map(fn ($row) => [
+            'id' => (int) $row->id,
+            'order_id' => $row->order_id !== null ? (int) $row->order_id : null,
+            'order_no' => $row->order_no !== null ? (string) $row->order_no : null,
+            'amount' => $this->formatVietnameseMoney($row->amount),
+            'rate_percent' => $row->rate_percent !== null ? (float) $row->rate_percent : null,
+            'basis_type' => $row->basis_type !== null ? (string) $row->basis_type : null,
+            'basis_value' => $this->formatVietnameseMoney($row->basis_value),
+            'settlement_status' => (string) $row->settlement_status,
+            'settlement_status_label_vi' => $this->commissionSettlementStatusLabelVi((string) $row->settlement_status),
+            'created_at' => $row->created_at !== null
+                ? now()->parse($row->created_at)->toIso8601String()
+                : null,
+        ])->values()->all();
 
         return $this->successResponse('api.order.history_commission_success', [
-            'orders' => $orders,
+            'period_month' => $periodMonth,
+            'summary' => $this->formatCommissionHistorySummary($summaryRows),
+            'entries' => $entries,
         ]);
     }
 
@@ -124,15 +142,15 @@ class OrderController extends BaseApiController
     {
         $userId = auth()->id();
 
-        $limitParam = $request->query('limit');
-        $limit = is_numeric($limitParam) ? (int) $limitParam : null;
-        if ($limit !== null) {
-            $limit = max(1, min($limit, 100));
-        }
-
-        return $this->successResponse('api.order.index_success', [
-            'orders' => $this->buildOrdersListPayload($userId, $limit),
+        $validated = $request->validate([
+            'limit' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'page' => ['nullable', 'integer', 'min:1'],
         ]);
+
+        $limit = isset($validated['limit']) ? (int) $validated['limit'] : null;
+        $page = isset($validated['page']) ? (int) $validated['page'] : 1;
+
+        return $this->successResponse('api.order.index_success', $this->buildOrdersListPayload($userId, $limit, null, $page));
     }
 
     public function search(Request $request): JsonResponse
@@ -140,15 +158,15 @@ class OrderController extends BaseApiController
         $validated = $request->validate([
             'q' => ['required', 'string'],
             'limit' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'page' => ['nullable', 'integer', 'min:1'],
         ]);
 
         $userId = auth()->id();
         $keyword = (string) ($validated['q'] ?? '');
         $limit = isset($validated['limit']) ? (int) $validated['limit'] : null;
+        $page = isset($validated['page']) ? (int) $validated['page'] : 1;
 
-        return $this->successResponse('api.order.index_success', [
-            'orders' => $this->buildOrdersListPayload($userId, $limit, $keyword),
-        ]);
+        return $this->successResponse('api.order.index_success', $this->buildOrdersListPayload($userId, $limit, $keyword, $page));
     }
 
     public function create(): JsonResponse
@@ -206,6 +224,7 @@ class OrderController extends BaseApiController
             'order_channel' => $order->order_channel,
             'subtotal_amount' => $this->formatVietnameseMoney($order->subtotal_amount),
             'discount_amount' => $this->formatVietnameseMoney($order->discount_amount),
+            'applied_tiers' => $this->formatAppliedTiersFromOrderDiscountSnapshot($order),
             'net_amount' => $this->formatVietnameseMoney($order->net_amount),
             'currency' => $this->vietnameseMoneyCurrency(),
             ...$order->legacyCustomerAddressForApi(),
@@ -580,6 +599,76 @@ class OrderController extends BaseApiController
         };
     }
 
+    /**
+     * @param  \Illuminate\Database\Query\Builder  $query
+     */
+    private function applyCommissionHistoryMonthFilter($query, string $periodMonth): void
+    {
+        if (Schema::hasTable('orders') && Schema::hasColumn('orders', 'order_month')) {
+            $query->where(function ($w) use ($periodMonth): void {
+                $w->where(function ($w2) use ($periodMonth): void {
+                    $w2->whereNotNull('ce.source_order_id')
+                        ->where('o.order_month', $periodMonth);
+                })->orWhere(function ($w2) use ($periodMonth): void {
+                    $w2->whereNull('ce.source_order_id')
+                        ->whereRaw("DATE_FORMAT(ce.created_at, '%Y-%m') = ?", [$periodMonth]);
+                });
+            });
+
+            return;
+        }
+
+        $query->whereRaw("DATE_FORMAT(ce.created_at, '%Y-%m') = ?", [$periodMonth]);
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int, object{amount: mixed, settlement_status: mixed}>  $rows
+     * @return array{
+     *     total_commission: string,
+     *     pending_commission: string,
+     *     approved_commission: string,
+     *     paid_commission: string,
+     *     entry_count: int
+     * }
+     */
+    private function formatCommissionHistorySummary(Collection $rows): array
+    {
+        $sumByStatus = [
+            'pending' => '0',
+            'approved' => '0',
+            'paid' => '0',
+        ];
+        $total = '0';
+
+        foreach ($rows as $row) {
+            $amount = $this->toMoneyBcString($row->amount ?? '0');
+            $total = bcadd($total, $amount, 2);
+            $status = (string) ($row->settlement_status ?? '');
+            if (isset($sumByStatus[$status])) {
+                $sumByStatus[$status] = bcadd($sumByStatus[$status], $amount, 2);
+            }
+        }
+
+        return [
+            'total_commission' => $this->formatVietnameseMoney($total),
+            'pending_commission' => $this->formatVietnameseMoney($sumByStatus['pending']),
+            'approved_commission' => $this->formatVietnameseMoney($sumByStatus['approved']),
+            'paid_commission' => $this->formatVietnameseMoney($sumByStatus['paid']),
+            'entry_count' => $rows->count(),
+        ];
+    }
+
+    private function toMoneyBcString(mixed $value): string
+    {
+        if ($value === null || $value === '') {
+            return '0';
+        }
+
+        $normalized = is_string($value) ? trim($value) : (string) $value;
+
+        return bcadd($normalized, '0', 2);
+    }
+
     private function buildAbsoluteImageUrl(?string $imagePath): ?string
     {
         if (! $imagePath) {
@@ -599,14 +688,43 @@ class OrderController extends BaseApiController
     }
 
     /**
-     * @return \Illuminate\Support\Collection<int, array<string, mixed>>
+     * Đơn thuộc đại lý đang đăng nhập: ưu tiên {@see Order::agent_profile_id}
+     * (gồm đơn tạo từ admin), fallback {@see Order::seller_user_id} nếu không có hồ sơ đại lý.
+     *
+     * @param  \Illuminate\Database\Eloquent\Builder<Order>  $query
      */
-    private function buildOrdersListPayload(?int $userId, ?int $limit = null, ?string $keyword = null)
+    private function applyAuthenticatedAgentOrdersScope($query, ?int $userId): void
+    {
+        if ($userId === null) {
+            $query->whereRaw('1 = 0');
+
+            return;
+        }
+
+        $agentProfileId = null;
+        if (Schema::hasTable('agent_profiles') && Schema::hasColumn('agent_profiles', 'user_id')) {
+            $agentProfileId = DB::table('agent_profiles')->where('user_id', $userId)->value('id');
+        }
+
+        if ($agentProfileId !== null && Schema::hasColumn('orders', 'agent_profile_id')) {
+            $query->where('agent_profile_id', (int) $agentProfileId);
+
+            return;
+        }
+
+        $query->where('seller_user_id', $userId);
+    }
+
+    /**
+     * @return array{orders: \Illuminate\Support\Collection<int, array<string, mixed>>, meta?: array{page: int, per_page: int, total: int, has_more: bool}}
+     */
+    private function buildOrdersListPayload(?int $userId, ?int $limit = null, ?string $keyword = null, int $page = 1)
     {
         $query = Order::query()
             ->with(['shippingAddress', 'items'])
-            ->where('seller_user_id', $userId)
             ->latest('id');
+
+        $this->applyAuthenticatedAgentOrdersScope($query, $userId);
 
         $normalizedKeyword = trim((string) $keyword);
         if ($normalizedKeyword !== '') {
@@ -619,8 +737,17 @@ class OrderController extends BaseApiController
             });
         }
 
+        $meta = null;
         if ($limit !== null) {
-            $query->limit($limit);
+            $page = max(1, $page);
+            $total = (clone $query)->count();
+            $query->offset(($page - 1) * $limit)->limit($limit);
+            $meta = [
+                'page' => $page,
+                'per_page' => $limit,
+                'total' => $total,
+                'has_more' => ($page * $limit) < $total,
+            ];
         }
 
         $ordersCollection = $query->get();
@@ -637,7 +764,7 @@ class OrderController extends BaseApiController
             )
             ->pluck('image_path', 'id');
 
-        return $ordersCollection
+        $orders = $ordersCollection
             ->map(function (Order $order) use ($productImagePathsById) {
                 $customer = $order->legacyCustomerAddressForApi();
 
@@ -673,6 +800,13 @@ class OrderController extends BaseApiController
                 ];
             })
             ->values();
+
+        $payload = ['orders' => $orders];
+        if ($meta !== null) {
+            $payload['meta'] = $meta;
+        }
+
+        return $payload;
     }
 
     /**
@@ -711,6 +845,32 @@ class OrderController extends BaseApiController
         }
 
         return ['lines' => $lines, 'subtotal' => $subtotal];
+    }
+
+    /**
+     * Chi tiết chiết khấu theo nấc (đơn agent có policy), đồng bộ shape với preview `applied_tiers`.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function formatAppliedTiersFromOrderDiscountSnapshot(Order $order): array
+    {
+        $snapshot = $order->discount_snapshot_json;
+        if (! is_array($snapshot) || ! isset($snapshot['breakdowns']) || ! is_array($snapshot['breakdowns'])) {
+            return [];
+        }
+
+        return collect($snapshot['breakdowns'])->map(function (array $row) {
+            return [
+                'commission_policy_id' => (int) ($row['commission_policy_id'] ?? 0),
+                'commission_policy_tier_id' => (int) ($row['commission_policy_tier_id'] ?? 0),
+                'qty_from' => (string) ($row['qty_from'] ?? ''),
+                'qty_to' => (string) ($row['qty_to'] ?? ''),
+                'applied_qty' => (string) ($row['applied_qty'] ?? ''),
+                'reward_percent' => (string) ($row['reward_percent'] ?? ''),
+                'basis_amount' => $this->formatVietnameseMoney($row['basis_amount'] ?? 0),
+                'discount_amount' => $this->formatVietnameseMoney($row['discount_amount'] ?? 0),
+            ];
+        })->values()->all();
     }
 
     /**
