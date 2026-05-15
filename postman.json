@@ -441,6 +441,7 @@
           "name": "Show Order",
           "request": {
             "method": "GET",
+            "description": "Trả về đơn gồm subtotal, **discount_amount** (tổng số tiền được chiết khấu, VND định dạng), **applied_tiers** (chi tiết theo nấc nếu đơn có policy tier), net_amount.",
             "header": [
               {
                 "key": "Accept",
@@ -479,6 +480,13 @@
                   "pm.test('Response has invoice and delivery receipt flags', function () {",
                   "    pm.expect(res.data).to.have.property('has_invoice_file');",
                   "    pm.expect(res.data).to.have.property('has_delivery_receipt_paths');",
+                  "});",
+                  "",
+                  "pm.test('Response has discount_amount (tiền chiết khấu) and applied_tiers', function () {",
+                  "    pm.expect(res.data).to.have.property('discount_amount');",
+                  "    pm.expect(res.data.discount_amount).to.be.a('string');",
+                  "    pm.expect(res.data).to.have.property('applied_tiers');",
+                  "    pm.expect(res.data.applied_tiers).to.be.an('array');",
                   "});",
                   "",
                   "pm.test('Products include image_path field', function () {",

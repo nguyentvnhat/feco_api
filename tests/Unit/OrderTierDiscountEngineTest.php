@@ -7,26 +7,46 @@ use PHPUnit\Framework\TestCase;
 
 class OrderTierDiscountEngineTest extends TestCase
 {
-    public function test_progressive_qty_70_splits_50_and_20_units(): void
+    /** @return list<array{quantity_in_base_unit:string, unit_price:string, quantity:string}> */
+    private function singleLine(string $qty, string $unitPrice): array
+    {
+        return [
+            [
+                'quantity_in_base_unit' => $qty,
+                'quantity' => $qty,
+                'unit_price' => $unitPrice,
+            ],
+        ];
+    }
+
+    public function test_progressive_qty_70_splits_50_and_20_units_by_unit_price(): void
     {
         $policyId = 1;
         $tiers = [
             ['id' => 10, 'min_value' => '1', 'max_value' => '50', 'reward_percent' => '10'],
             ['id' => 11, 'min_value' => '51', 'max_value' => '100', 'reward_percent' => '20'],
         ];
+        $lines = $this->singleLine('70', '10');
+        $subtotal = '700.00';
 
-        $result = OrderTierDiscountEngine::computeProgressivePercent(
+        $result = OrderTierDiscountEngine::computeProgressivePercentFromLines(
             $policyId,
             '0',
             '70',
-            '1000.00',
+            $subtotal,
             $tiers,
             '70',
+            $lines,
         );
 
         $this->assertCount(2, $result['breakdowns']);
         $this->assertSame('50.0000', $result['breakdowns'][0]['applied_qty']);
         $this->assertSame('20.0000', $result['breakdowns'][1]['applied_qty']);
+        $this->assertSame('500.00', $result['breakdowns'][0]['basis_amount']);
+        $this->assertSame('200.00', $result['breakdowns'][1]['basis_amount']);
+        $this->assertSame('50.00', $result['breakdowns'][0]['discount_amount']);
+        $this->assertSame('40.00', $result['breakdowns'][1]['discount_amount']);
+        $this->assertSame('90.00', $result['total_discount_amount']);
     }
 
     public function test_progressive_previous_40_plus_qty_70_splits_10_50_10(): void
@@ -37,14 +57,17 @@ class OrderTierDiscountEngineTest extends TestCase
             ['id' => 2, 'min_value' => '51', 'max_value' => '100', 'reward_percent' => '20'],
             ['id' => 3, 'min_value' => '101', 'max_value' => null, 'reward_percent' => '30'],
         ];
+        $lines = $this->singleLine('70', '10');
+        $subtotal = '700.00';
 
-        $result = OrderTierDiscountEngine::computeProgressivePercent(
+        $result = OrderTierDiscountEngine::computeProgressivePercentFromLines(
             $policyId,
             '40',
             '70',
-            '1000.00',
+            $subtotal,
             $tiers,
             '110',
+            $lines,
         );
 
         $this->assertCount(3, $result['breakdowns']);
@@ -62,7 +85,7 @@ class OrderTierDiscountEngineTest extends TestCase
             ['id' => 3, 'min_value' => '101', 'max_value' => null, 'reward_percent' => '30'],
         ];
 
-        $result = OrderTierDiscountEngine::computeFlatPercent(
+        $result = OrderTierDiscountEngine::computeFlatPercentFromLines(
             $policyId,
             '40',
             '70',
@@ -83,9 +106,11 @@ class OrderTierDiscountEngineTest extends TestCase
             ['id' => 1, 'min_value' => '1', 'max_value' => '50', 'reward_percent' => '10'],
             ['id' => 2, 'min_value' => '51', 'max_value' => '100', 'reward_percent' => '20'],
         ];
+        $lines = $this->singleLine('70', '10');
+        $subtotal = '700.00';
 
-        $a = OrderTierDiscountEngine::computeProgressivePercent(4, '0', '70', '1000.00', $tiers, '70');
-        $b = OrderTierDiscountEngine::computeProgressivePercent(4, '0', '70', '1000.00', $tiers, '70');
+        $a = OrderTierDiscountEngine::computeProgressivePercentFromLines(4, '0', '70', $subtotal, $tiers, '70', $lines);
+        $b = OrderTierDiscountEngine::computeProgressivePercentFromLines(4, '0', '70', $subtotal, $tiers, '70', $lines);
 
         $this->assertSame($a['total_discount_amount'], $b['total_discount_amount']);
         $this->assertSame($a['net_amount'], $b['net_amount']);

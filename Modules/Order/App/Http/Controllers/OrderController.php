@@ -206,6 +206,7 @@ class OrderController extends BaseApiController
             'order_channel' => $order->order_channel,
             'subtotal_amount' => $this->formatVietnameseMoney($order->subtotal_amount),
             'discount_amount' => $this->formatVietnameseMoney($order->discount_amount),
+            'applied_tiers' => $this->formatAppliedTiersFromOrderDiscountSnapshot($order),
             'net_amount' => $this->formatVietnameseMoney($order->net_amount),
             'currency' => $this->vietnameseMoneyCurrency(),
             ...$order->legacyCustomerAddressForApi(),
@@ -711,6 +712,32 @@ class OrderController extends BaseApiController
         }
 
         return ['lines' => $lines, 'subtotal' => $subtotal];
+    }
+
+    /**
+     * Chi tiết chiết khấu theo nấc (đơn agent có policy), đồng bộ shape với preview `applied_tiers`.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function formatAppliedTiersFromOrderDiscountSnapshot(Order $order): array
+    {
+        $snapshot = $order->discount_snapshot_json;
+        if (! is_array($snapshot) || ! isset($snapshot['breakdowns']) || ! is_array($snapshot['breakdowns'])) {
+            return [];
+        }
+
+        return collect($snapshot['breakdowns'])->map(function (array $row) {
+            return [
+                'commission_policy_id' => (int) ($row['commission_policy_id'] ?? 0),
+                'commission_policy_tier_id' => (int) ($row['commission_policy_tier_id'] ?? 0),
+                'qty_from' => (string) ($row['qty_from'] ?? ''),
+                'qty_to' => (string) ($row['qty_to'] ?? ''),
+                'applied_qty' => (string) ($row['applied_qty'] ?? ''),
+                'reward_percent' => (string) ($row['reward_percent'] ?? ''),
+                'basis_amount' => $this->formatVietnameseMoney($row['basis_amount'] ?? 0),
+                'discount_amount' => $this->formatVietnameseMoney($row['discount_amount'] ?? 0),
+            ];
+        })->values()->all();
     }
 
     /**
