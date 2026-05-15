@@ -267,12 +267,13 @@
           }
         ]
       },
-      "description": "OrderController: list, statuses, create metadata, show, preview (tier discount), store, update.",
+      "description": "OrderController: list, search, history commission, statuses, create metadata, show, preview (tier discount), store, update.",
       "item": [
         {
           "name": "List My Orders",
           "request": {
             "method": "GET",
+            "description": "Danh sách đơn của đại lý đăng nhập theo agent_profile_id (gồm đơn tạo từ admin). Chỉ fallback seller_user_id nếu tài khoản không có hồ sơ đại lý.",
             "header": [
               {
                 "key": "Accept",
@@ -330,6 +331,140 @@
                   "        if (o.products.length > 0) {",
                   "            pm.expect(o.products[0]).to.have.property('image_path');",
                   "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search Orders",
+          "request": {
+            "method": "GET",
+            "description": "Tìm đơn của đại lý đăng nhập (cùng phạm vi agent_profile_id như List My Orders). Query **q** bắt buộc; **limit** / **page** tùy chọn.",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders/search?q=&limit=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "",
+                  "description": "required | Từ khóa tìm kiếm"
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "optional | Giới hạn kết quả (1–100)"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Search orders status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Response has orders array', function () {",
+                  "    pm.expect(res).to.have.property('success', true);",
+                  "    pm.expect(res.data).to.have.property('orders');",
+                  "    pm.expect(res.data.orders).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Order History Commission",
+          "request": {
+            "method": "GET",
+            "description": "Hoa hồng của đại lý đang đăng nhập (commission_entries theo beneficiary_user_id, loại trừ entry_type=discount). Query: month (YYYY-MM), status (pending|approved|paid|rejected), limit (mặc định 20).",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/order/history-commission?month=&status=&limit=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "order",
+                "history-commission"
+              ],
+              "query": [
+                {
+                  "key": "month",
+                  "value": "",
+                  "description": "optional | YYYY-MM (mặc định tháng hiện tại)"
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "description": "optional | pending | approved | paid | rejected"
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "optional | 1–100, mặc định 20"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('History commission status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Hoa hồng của đại lý đang đăng nhập — has summary', function () {",
+                  "    pm.expect(res).to.have.property('success', true);",
+                  "    pm.expect(res.data).to.have.property('summary');",
+                  "    pm.expect(res.data.summary).to.have.property('total_commission');",
+                  "    pm.expect(res.data.summary).to.have.property('entry_count');",
+                  "});",
+                  "",
+                  "pm.test('Response has entries array', function () {",
+                  "    pm.expect(res.data).to.have.property('entries');",
+                  "    pm.expect(res.data.entries).to.be.an('array');",
+                  "});",
+                  "",
+                  "if (res.data.entries && res.data.entries.length > 0) {",
+                  "    pm.test('Each entry has amount, settlement_status, order_no', function () {",
+                  "        var e = res.data.entries[0];",
+                  "        pm.expect(e).to.have.property('amount');",
+                  "        pm.expect(e).to.have.property('settlement_status');",
+                  "        pm.expect(e).to.have.property('order_no');",
                   "    });",
                   "}"
                 ]
@@ -441,6 +576,7 @@
           "name": "Show Order",
           "request": {
             "method": "GET",
+            "description": "Trả về đơn gồm subtotal, **discount_amount** (tổng số tiền được chiết khấu, VND định dạng), **applied_tiers** (chi tiết theo nấc nếu đơn có policy tier), net_amount.",
             "header": [
               {
                 "key": "Accept",
@@ -479,6 +615,13 @@
                   "pm.test('Response has invoice and delivery receipt flags', function () {",
                   "    pm.expect(res.data).to.have.property('has_invoice_file');",
                   "    pm.expect(res.data).to.have.property('has_delivery_receipt_paths');",
+                  "});",
+                  "",
+                  "pm.test('Response has discount_amount (tiền chiết khấu) and applied_tiers', function () {",
+                  "    pm.expect(res.data).to.have.property('discount_amount');",
+                  "    pm.expect(res.data.discount_amount).to.be.a('string');",
+                  "    pm.expect(res.data).to.have.property('applied_tiers');",
+                  "    pm.expect(res.data.applied_tiers).to.be.an('array');",
                   "});",
                   "",
                   "pm.test('Products include image_path field', function () {",

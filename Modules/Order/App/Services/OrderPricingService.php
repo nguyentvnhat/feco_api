@@ -41,8 +41,9 @@ class OrderPricingService
         $policy = $this->resolveActiveDiscountPolicyRow($agentProfileId, $orderDateYmd);
         $eligibleStatuses = OrderStatus::soldLikeValues();
 
-        $monthlyQtyBefore = '0';
         $isMonthly = false;
+        $monthlyQtyBefore = '0';
+
         if ($policy !== null) {
             $conditions = $this->decodeConditions($policy);
             $eligibleStatuses = $this->eligibleOrderStatuses($conditions);
@@ -59,7 +60,7 @@ class OrderPricingService
 
         $monthlyQtyAfter = bcadd($monthlyQtyBefore, $currentOrderQty, 4);
 
-        if ($policy === null || bccomp($currentOrderQty, '0', 4) <= 0 || bccomp($subtotalBc, '0', 2) <= 0) {
+        if ($policy === null || bccomp($subtotalBc, '0', 2) <= 0 || bccomp($currentOrderQty, '0', 4) <= 0) {
             return $this->emptyPricingResponse(
                 $lines,
                 $subtotalBc,
@@ -67,7 +68,8 @@ class OrderPricingService
                 $monthlyQtyAfter,
                 $eligibleStatuses,
                 $orderMonthYm,
-                $isMonthly
+                $isMonthly,
+                null
             );
         }
 
@@ -92,7 +94,7 @@ class OrderPricingService
         }
 
         $engineResult = $calculationMethod === 'flat'
-            ? OrderTierDiscountEngine::computeFlatPercent(
+            ? OrderTierDiscountEngine::computeFlatPercentFromLines(
                 (int) $policy->id,
                 $monthlyQtyBefore,
                 $currentOrderQty,
@@ -100,13 +102,14 @@ class OrderPricingService
                 $tiers,
                 $monthlyQtyAfter
             )
-            : OrderTierDiscountEngine::computeProgressivePercent(
+            : OrderTierDiscountEngine::computeProgressivePercentFromLines(
                 (int) $policy->id,
                 $monthlyQtyBefore,
                 $currentOrderQty,
                 $subtotalBc,
                 $tiers,
-                $monthlyQtyAfter
+                $monthlyQtyAfter,
+                $lines
             );
 
         $policyPayload = $this->formatPolicyPayload($policy, $calculationMethod, $isMonthly);
@@ -116,6 +119,7 @@ class OrderPricingService
             'monthly_context' => [
                 'is_monthly' => $isMonthly,
                 'order_month' => $orderMonthYm,
+                'calculation_base' => 'quantity',
                 'previous_month_quantity' => $this->qtyDisplay($monthlyQtyBefore),
                 'monthly_qty_before' => $this->qtyDisplay($monthlyQtyBefore),
                 'monthly_qty_after' => $this->qtyDisplay($monthlyQtyAfter),
@@ -201,16 +205,32 @@ class OrderPricingService
             return null;
         }
 
+        $agentId = null;
+        if (Schema::hasTable('agent_profiles') && Schema::hasColumn('agent_profiles', 'user_id')) {
+            $userId = DB::table('agent_profiles')->where('id', $agentProfileId)->value('user_id');
+            if ($userId && Schema::hasTable('agents')) {
+                $agentId = DB::table('agents')->where('user_id', $userId)->value('id');
+            }
+        }
+
         $q = DB::table('agent_commission_policy as acp')
             ->join('commission_policies as cp', 'cp.id', '=', 'acp.commission_policy_id')
             ->whereIn('cp.policy_type', self::DISCOUNT_POLICY_TYPES)
             ->where('cp.target_subject', 'agent')
             ->where('cp.is_active', 1)
-            ->where('cp.calculation_base', 'quantity')
+            ->whereIn('cp.calculation_base', ['quantity', 'box_count'])
             ->where('cp.reward_type', 'percent');
 
         if (Schema::hasColumn('agent_commission_policy', 'agent_profile_id')) {
-            $q->where('acp.agent_profile_id', $agentProfileId);
+            $q->where(function ($w) use ($agentProfileId, $agentId): void {
+                $w->where('acp.agent_profile_id', $agentProfileId);
+                if ($agentId !== null && Schema::hasColumn('agent_commission_policy', 'agent_id')) {
+                    $w->orWhere(function ($w2) use ($agentId): void {
+                        $w2->whereNull('acp.agent_profile_id')
+                            ->where('acp.agent_id', $agentId);
+                    });
+                }
+            });
         } else {
             return null;
         }
@@ -230,10 +250,11 @@ class OrderPricingService
             $q->where('acp.is_active', 1);
         }
 
+        // Cùng thứ tự với AgentDiscountCalculatorService (admin): priority tăng dần, id tăng dần.
         if (Schema::hasColumn('commission_policies', 'priority')) {
-            $q->orderByDesc('cp.priority')->orderByDesc('cp.id');
+            $q->orderBy('cp.priority')->orderBy('cp.id');
         } else {
-            $q->orderByDesc('cp.id');
+            $q->orderBy('cp.id');
         }
 
         return $q->select('cp.*')->first();
@@ -355,16 +376,17 @@ class OrderPricingService
     private function buildDiscountSnapshotJson(
         object $policy,
         string $calculationMethod,
-        string $monthlyQtyBefore,
-        string $monthlyQtyAfter,
+        string $ladderBefore,
+        string $ladderAfter,
         array $engineResult,
     ): array {
         return [
             'policy_id' => (int) $policy->id,
             'policy_code' => (string) ($policy->policy_code ?? ''),
             'calculation_method' => $calculationMethod,
-            'monthly_qty_before' => $this->qtyDisplay($monthlyQtyBefore),
-            'monthly_qty_after' => $this->qtyDisplay($monthlyQtyAfter),
+            'calculation_base' => 'quantity',
+            'monthly_qty_before' => $this->qtyDisplay($ladderBefore),
+            'monthly_qty_after' => $this->qtyDisplay($ladderAfter),
             'total_discount_amount' => $engineResult['total_discount_amount'],
             'net_amount' => $engineResult['net_amount'],
             'breakdowns' => $engineResult['breakdowns'],
@@ -482,6 +504,7 @@ class OrderPricingService
             'monthly_context' => [
                 'is_monthly' => $isMonthly,
                 'order_month' => $orderMonthYm,
+                'calculation_base' => 'quantity',
                 'previous_month_quantity' => $this->qtyDisplay($monthlyQtyBefore),
                 'monthly_qty_before' => $this->qtyDisplay($monthlyQtyBefore),
                 'monthly_qty_after' => $this->qtyDisplay($monthlyQtyAfter),
