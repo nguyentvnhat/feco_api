@@ -281,7 +281,7 @@ class AuthController extends BaseApiController
         }
 
         if (Schema::hasColumn('orders', 'order_status')) {
-            $query->where('orders.order_status', OrderStatus::DELIVERED->value);
+            $query->where('orders.order_status', OrderStatus::PROCESSING->value);
         }
 
         return (float) $query->sum('commission_entries.amount');
