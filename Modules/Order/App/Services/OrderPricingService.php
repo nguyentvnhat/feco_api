@@ -443,12 +443,7 @@ class OrderPricingService
      */
     private function eligibleOrderStatuses(array $conditions): array
     {
-        $statuses = $conditions['eligible_order_statuses'] ?? null;
-        if (! is_array($statuses) || $statuses === []) {
-            return [OrderStatus::TPL_CONFIRMED->value, OrderStatus::DELIVERED->value];
-        }
-
-        return array_values(array_filter(array_map(static fn ($s) => is_string($s) ? $s : null, $statuses)));
+        return [OrderStatus::PROCESSING->value];
     }
 
     private function isMonthlyPolicy(object $policy): bool
