@@ -940,6 +940,51 @@
               }
             }
           ]
+        },
+        {
+          "name": "Delete Order",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders/{{order_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{order_id}}"
+              ]
+            },
+            "description": "Xóa đơn hàng của đại lý đang đăng nhập theo phạm vi agent_profile_id/seller_user_id. Trả 404 nếu không tìm thấy hoặc không có quyền trên đơn."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Delete order status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Delete order response uses common wrapper', function () {",
+                  "    pm.expect(res).to.have.property('success', true);",
+                  "    pm.expect(res).to.have.property('message');",
+                  "    pm.expect(res).to.have.property('data');",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     },

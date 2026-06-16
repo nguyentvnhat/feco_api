@@ -501,6 +501,28 @@ class OrderController extends BaseApiController
         ]);
     }
 
+    public function destroy(int $order): JsonResponse
+    {
+        $query = Order::query()->whereKey($order);
+        $this->applyAuthenticatedAgentOrdersScope($query, auth()->id());
+        $targetOrder = $query->first();
+
+        if (! $targetOrder) {
+            return $this->errorResponse('api.errors.not_found', 404, (object) []);
+        }
+
+        DB::transaction(function () use ($targetOrder): void {
+            $targetOrder->statusHistories()->delete();
+            $targetOrder->internalNotes()->delete();
+            $targetOrder->shipments()->delete();
+            $targetOrder->addresses()->delete();
+            $targetOrder->items()->delete();
+            $targetOrder->delete();
+        });
+
+        return $this->successResponse('api.order.destroy_success', (object) []);
+    }
+
     /**
      * @param  array<string, mixed>  $validated
      * @return array<string, mixed>

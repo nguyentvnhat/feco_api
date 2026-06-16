@@ -19,11 +19,24 @@ class AuthController extends BaseApiController
     public function login(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'login' => ['required', 'string'],
+            'login' => ['nullable', 'string'],
+            'email' => ['nullable', 'string'],
+            'phone' => ['nullable', 'string'],
             'password' => ['required', 'string'],
         ]);
 
-        $login = $validated['login'];
+        $login = trim((string) ($validated['login'] ?? ''));
+        if ($login === '') {
+            $login = trim((string) ($validated['email'] ?? ''));
+        }
+        if ($login === '') {
+            $login = trim((string) ($validated['phone'] ?? ''));
+        }
+
+        if ($login === '') {
+            return $this->errorResponse('api.auth.invalid_credentials', 401, (object) []);
+        }
+
         $password = $validated['password'];
 
         $user = User::query()
@@ -281,7 +294,7 @@ class AuthController extends BaseApiController
         }
 
         if (Schema::hasColumn('orders', 'order_status')) {
-            $query->where('orders.order_status', OrderStatus::PROCESSING->value);
+            $query->where('orders.order_status', OrderStatus::READY_TO_SHIP->value);
         }
 
         return (float) $query->sum('commission_entries.amount');

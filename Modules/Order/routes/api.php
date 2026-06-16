@@ -25,4 +25,5 @@ Route::middleware(['auth:sanctum'])->prefix('v1')->name('api.')->group(function 
     Route::get('orders/{order}', [OrderController::class, 'show'])->name('orders.show');
     Route::post('orders', [OrderController::class, 'store'])->name('orders.store');
     Route::put('orders/{order}', [OrderController::class, 'update'])->name('orders.update');
+    Route::delete('orders/{order}', [OrderController::class, 'destroy'])->name('orders.destroy');
 });

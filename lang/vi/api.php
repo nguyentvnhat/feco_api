@@ -22,6 +22,7 @@ return [
         'statuses_success' => 'Lấy danh sách trạng thái đơn hàng thành công.',
         'store_success' => 'Tạo đơn hàng thành công.',
         'update_success' => 'Cập nhật đơn hàng thành công.',
+        'destroy_success' => 'Xóa đơn hàng thành công.',
         'preview_success' => 'Xem trước đơn hàng thành công.',
         'preview_no_agent_profile' => 'Tài khoản chưa có hồ sơ đại lý để áp dụng chiết khấu.',
         'agent_code_not_found' => 'Không tìm thấy mã đại lý của người dùng hiện tại để tạo mã đơn hàng.',
