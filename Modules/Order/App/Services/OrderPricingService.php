@@ -443,7 +443,7 @@ class OrderPricingService
      */
     private function eligibleOrderStatuses(array $conditions): array
     {
-        return [OrderStatus::PROCESSING->value];
+        return [OrderStatus::READY_TO_SHIP->value];
     }
 
     private function isMonthlyPolicy(object $policy): bool

@@ -19,11 +19,24 @@ class AuthController extends BaseApiController
     public function login(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'login' => ['required', 'string'],
+            'login' => ['nullable', 'string'],
+            'email' => ['nullable', 'string'],
+            'phone' => ['nullable', 'string'],
             'password' => ['required', 'string'],
         ]);
 
-        $login = $validated['login'];
+        $login = trim((string) ($validated['login'] ?? ''));
+        if ($login === '') {
+            $login = trim((string) ($validated['email'] ?? ''));
+        }
+        if ($login === '') {
+            $login = trim((string) ($validated['phone'] ?? ''));
+        }
+
+        if ($login === '') {
+            return $this->errorResponse('api.auth.invalid_credentials', 401, (object) []);
+        }
+
         $password = $validated['password'];
 
         $user = User::query()
@@ -31,7 +44,18 @@ class AuthController extends BaseApiController
             ->orWhere('email', $login)
             ->first();
 
-        if (!$user || !Hash::check($password, (string) $user->password)) {
+        if ($user && $this->isAccountLocked($user)) {
+            return $this->errorResponse('api.auth.account_locked', 403, (object) []);
+        }
+
+        if (! $user || ! Hash::check($password, (string) $user->password)) {
+            if ($user) {
+                $lockedAfterFailure = $this->recordFailedLoginAttempt($user);
+                if ($lockedAfterFailure) {
+                    return $this->errorResponse('api.auth.account_locked', 403, (object) []);
+                }
+            }
+
             return $this->errorResponse('api.auth.invalid_credentials', 401, (object) []);
         }
 
@@ -42,6 +66,8 @@ class AuthController extends BaseApiController
         if ($this->hasSoftDeletedAgent($user->id)) {
             return $this->errorResponse('api.auth.account_not_found', 401, (object) []);
         }
+
+        $this->resetFailedLoginAttempt($user);
 
         if (Schema::hasColumn('users', 'last_login_at')) {
             $user->forceFill([
@@ -281,7 +307,7 @@ class AuthController extends BaseApiController
         }
 
         if (Schema::hasColumn('orders', 'order_status')) {
-            $query->where('orders.order_status', OrderStatus::PROCESSING->value);
+            $query->where('orders.order_status', OrderStatus::READY_TO_SHIP->value);
         }
 
         return (float) $query->sum('commission_entries.amount');
@@ -466,6 +492,66 @@ class AuthController extends BaseApiController
         return DB::table('agents')
             ->where('parent_agent_id', $agentId)
             ->exists();
+    }
+
+    private function isAccountLocked(User $user): bool
+    {
+        if (Schema::hasColumn('users', 'status') && (string) ($user->status ?? '') === 'locked') {
+            return true;
+        }
+
+        if (Schema::hasColumn('users', 'locked_at') && $user->locked_at !== null) {
+            return true;
+        }
+
+        return false;
+    }
+
+    private function resetFailedLoginAttempt(User $user): void
+    {
+        $updates = [];
+        if (Schema::hasColumn('users', 'failed_login_attempts')) {
+            $updates['failed_login_attempts'] = 0;
+        }
+        if (Schema::hasColumn('users', 'last_failed_login_at')) {
+            $updates['last_failed_login_at'] = null;
+        }
+
+        if ($updates !== []) {
+            $user->forceFill($updates)->save();
+        }
+    }
+
+    private function recordFailedLoginAttempt(User $user): bool
+    {
+        $attempts = (int) ($user->failed_login_attempts ?? 0) + 1;
+        $updates = [];
+
+        if (Schema::hasColumn('users', 'failed_login_attempts')) {
+            $updates['failed_login_attempts'] = $attempts;
+        }
+        if (Schema::hasColumn('users', 'last_failed_login_at')) {
+            $updates['last_failed_login_at'] = now();
+        }
+
+        $locked = $attempts >= 3;
+        if ($locked) {
+            if (Schema::hasColumn('users', 'status')) {
+                $updates['status'] = 'locked';
+            }
+            if (Schema::hasColumn('users', 'locked_at')) {
+                $updates['locked_at'] = now();
+            }
+            if (Schema::hasColumn('users', 'locked_reason')) {
+                $updates['locked_reason'] = 'Đăng nhập sai quá 3 lần';
+            }
+        }
+
+        if ($updates !== []) {
+            $user->forceFill($updates)->save();
+        }
+
+        return $locked;
     }
 }
 
