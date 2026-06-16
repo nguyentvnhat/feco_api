@@ -55,6 +55,7 @@ class ChildAgentController extends BaseApiController
                 return array_merge($agent->toArray(), [
                     'order_sold_count' => $summary['order_sold_count'],
                     'total_revenue' => $this->formatVietnameseMoney($summary['total_revenue']),
+                    'latest_order_at' => $summary['latest_order_at'],
                     'currency' => $this->vietnameseMoneyCurrency(),
                 ]);
             })
@@ -72,12 +73,12 @@ class ChildAgentController extends BaseApiController
     }
 
     /**
-     * @return array{order_sold_count:int,total_revenue:float}
+     * @return array{order_sold_count:int,total_revenue:float,latest_order_at:?string}
      */
     private function getOrderSummaryByAgent(Agent $agent): array
     {
         if (! Schema::hasTable('orders')) {
-            return ['order_sold_count' => 0, 'total_revenue' => 0];
+            return ['order_sold_count' => 0, 'total_revenue' => 0, 'latest_order_at' => null];
         }
 
         $agentProfileId = null;
@@ -101,12 +102,20 @@ class ChildAgentController extends BaseApiController
         } elseif (Schema::hasColumn('orders', 'seller_user_id') && $agent->user_id) {
             $ordersQuery->where('seller_user_id', $agent->user_id);
         } else {
-            return ['order_sold_count' => 0, 'total_revenue' => 0];
+            return ['order_sold_count' => 0, 'total_revenue' => 0, 'latest_order_at' => null];
+        }
+
+        $latestOrderAt = null;
+        if (Schema::hasColumn('orders', 'order_date')) {
+            $latestOrderAt = (clone $ordersQuery)->max('order_date');
+        } elseif (Schema::hasColumn('orders', 'created_at')) {
+            $latestOrderAt = (clone $ordersQuery)->max('created_at');
         }
 
         return [
             'order_sold_count' => (int) $ordersQuery->count(),
             'total_revenue' => (float) $ordersQuery->sum('net_amount'),
+            'latest_order_at' => $latestOrderAt ? now()->parse((string) $latestOrderAt)->toIso8601String() : null,
         ];
     }
 }

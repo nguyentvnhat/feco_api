@@ -6,11 +6,12 @@ return [
         'validation_error' => 'Validation failed.',
     ],
     'auth' => [
-        'invalid_credentials' => 'Invalid credentials.',
+        'invalid_credentials' => 'Invalid login credentials.',
         'login_success' => 'Login successful.',
         'logout_success' => 'Logout successful.',
         'account_not_found' => 'Account does not exist.',
         'account_not_activated' => 'Your account is not activated. Please contact administrator.',
+        'account_locked' => 'Your account has been locked. Please contact administrator to unlock it.',
         'agent_policy_not_configured' => 'Commission policy has not been configured. Please contact administrator.',
     ],
     'order' => [

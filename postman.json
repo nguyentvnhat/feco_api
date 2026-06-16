@@ -399,7 +399,7 @@
           "name": "Order History Commission",
           "request": {
             "method": "GET",
-            "description": "Hoa hồng của đại lý đang đăng nhập (commission_entries theo beneficiary_user_id, loại trừ entry_type=discount). Query: month (YYYY-MM), status (pending|approved|paid|rejected), limit (mặc định 20).",
+            "description": "Hoa hồng của đại lý đang đăng nhập (commission_entries theo beneficiary_user_id, loại trừ entry_type=discount). Query: month (YYYY-MM), all=1 để xem tất cả tháng, status (pending|approved|paid|rejected), limit (mặc định 20).",
             "header": [
               {
                 "key": "Accept",
@@ -407,7 +407,7 @@
               }
             ],
             "url": {
-              "raw": "{{base_url}}/api/v1/order/history-commission?month=&status=&limit=20",
+              "raw": "{{base_url}}/api/v1/order/history-commission?month=&all=&status=&limit=20",
               "host": [
                 "{{base_url}}"
               ],
@@ -422,6 +422,11 @@
                   "key": "month",
                   "value": "",
                   "description": "optional | YYYY-MM (mặc định tháng hiện tại)"
+                },
+                {
+                  "key": "all",
+                  "value": "",
+                  "description": "optional | 1/true để bỏ lọc tháng và xem tất cả"
                 },
                 {
                   "key": "status",
@@ -1092,6 +1097,9 @@
                   "    pm.expect(res.data).to.have.property('parent_agent');",
                   "    pm.expect(res.data).to.have.property('agents');",
                   "    pm.expect(res.data.agents).to.be.an('array');",
+                  "    if (res.data.agents.length > 0) {",
+                  "        pm.expect(res.data.agents[0]).to.have.property('latest_order_at');",
+                  "    }",
                   "});"
                 ]
               }

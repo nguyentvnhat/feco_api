@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
+use Modules\Order\App\Mail\AgentOrderCancelledDirectEmployeeMail;
 use Modules\Order\App\Mail\AgentOrderCreatedDirectEmployeeMail;
 use Modules\Order\App\Http\Requests\PreviewOrderRequest;
 use Modules\Order\App\Http\Requests\StoreOrderRequest;
@@ -59,6 +60,7 @@ class OrderController extends BaseApiController
             'month' => ['nullable', 'date_format:Y-m'],
             'status' => ['nullable', Rule::in(['pending', 'approved', 'paid', 'rejected'])],
             'limit' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'all' => ['nullable', Rule::in([0, 1, '0', '1', true, false, 'true', 'false'])],
         ]);
 
         if (! Schema::hasTable('agent_profiles')) {
@@ -74,7 +76,8 @@ class OrderController extends BaseApiController
         }
 
         $beneficiaryUserId = (int) $agentProfile->user_id;
-        $periodMonth = (string) ($validated['month'] ?? now()->format('Y-m'));
+        $allPeriods = $this->parseBooleanQueryValue($validated['all'] ?? false);
+        $periodMonth = $allPeriods ? null : (string) ($validated['month'] ?? now()->format('Y-m'));
         $limit = isset($validated['limit']) ? (int) $validated['limit'] : 20;
         $statusFilter = isset($validated['status']) ? (string) $validated['status'] : null;
 
@@ -93,7 +96,9 @@ class OrderController extends BaseApiController
             ->where('ce.beneficiary_user_id', $beneficiaryUserId)
             ->where('ce.entry_type', '!=', 'discount');
 
-        $this->applyCommissionHistoryMonthFilter($baseQuery, $periodMonth);
+        if ($periodMonth !== null && $periodMonth !== '') {
+            $this->applyCommissionHistoryMonthFilter($baseQuery, $periodMonth);
+        }
 
         if ($statusFilter !== null) {
             $baseQuery->where('ce.settlement_status', $statusFilter);
@@ -628,6 +633,8 @@ class OrderController extends BaseApiController
                 ]);
             }
         });
+        $targetOrder->refresh();
+        $this->notifyDirectEmployeeAboutCancelledAgentOrder($targetOrder);
 
         return $this->successResponse('api.order.cancel_success', (object) []);
     }
@@ -798,6 +805,21 @@ class OrderController extends BaseApiController
         $normalized = is_string($value) ? trim($value) : (string) $value;
 
         return bcadd($normalized, '0', 2);
+    }
+
+    private function parseBooleanQueryValue(mixed $value): bool
+    {
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        if (is_int($value)) {
+            return $value === 1;
+        }
+
+        $normalized = strtolower(trim((string) $value));
+
+        return in_array($normalized, ['1', 'true'], true);
     }
 
     private function buildAbsoluteImageUrl(?string $imagePath): ?string
@@ -1149,6 +1171,63 @@ class OrderController extends BaseApiController
             ));
         } catch (\Throwable $mailException) {
             Log::warning('api.order.store_direct_employee_mail_failed', [
+                'order_id' => $order->id,
+                'order_no' => $order->order_no,
+                'agent_id' => $agentRow->id,
+                'agent_code' => $agentRow->code,
+                'direct_employee_email' => $recipient['email'],
+                'exception_message' => $mailException->getMessage(),
+                'exception_class' => $mailException::class,
+            ]);
+        }
+    }
+
+    private function notifyDirectEmployeeAboutCancelledAgentOrder(Order $order): void
+    {
+        $authUserId = auth()->id();
+        if (! $authUserId || ! Schema::hasTable('agents')) {
+            return;
+        }
+
+        $agentRow = DB::table('agents')
+            ->where('user_id', $authUserId)
+            ->first(['id', 'code', 'name', 'direct_employee_name']);
+
+        if (! $agentRow) {
+            return;
+        }
+
+        $directEmployeeName = trim((string) ($agentRow->direct_employee_name ?? ''));
+        if ($directEmployeeName === '') {
+            return;
+        }
+
+        $recipient = $this->resolveDirectEmployeeNotificationRecipient($directEmployeeName);
+        if ($recipient === null) {
+            Log::info('api.order.cancel_direct_employee_recipient_not_found', [
+                'order_id' => $order->id,
+                'order_no' => $order->order_no,
+                'agent_id' => $agentRow->id,
+                'agent_code' => $agentRow->code,
+                'direct_employee_name' => $directEmployeeName,
+            ]);
+
+            return;
+        }
+
+        try {
+            Mail::to($recipient['email'])->send(new AgentOrderCancelledDirectEmployeeMail(
+                orderNo: (string) $order->order_no,
+                cancelledAt: now()->format('d/m/Y H:i'),
+                customerName: trim((string) ($order->customer_name ?? '')) ?: '—',
+                netAmountFormatted: $this->formatVietnameseMoney($order->net_amount),
+                currency: $this->vietnameseMoneyCurrency(),
+                agentCode: trim((string) ($agentRow->code ?? '')) ?: '—',
+                agentName: trim((string) ($agentRow->name ?? '')) ?: '—',
+                directEmployeeName: $recipient['name'],
+            ));
+        } catch (\Throwable $mailException) {
+            Log::warning('api.order.cancel_direct_employee_mail_failed', [
                 'order_id' => $order->id,
                 'order_no' => $order->order_no,
                 'agent_id' => $agentRow->id,
