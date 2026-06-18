@@ -443,21 +443,18 @@ class OrderPricingService
      */
     private function eligibleOrderStatuses(array $conditions): array
     {
-        $statuses = $conditions['eligible_order_statuses'] ?? null;
-        if (! is_array($statuses) || $statuses === []) {
-            return [OrderStatus::TPL_CONFIRMED->value, OrderStatus::DELIVERED->value];
-        }
-
-        return array_values(array_filter(array_map(static fn ($s) => is_string($s) ? $s : null, $statuses)));
+        return [OrderStatus::READY_TO_SHIP->value];
     }
 
     private function isMonthlyPolicy(object $policy): bool
     {
         if (! Schema::hasColumn('commission_policies', 'period_type')) {
-            return false;
+            return true;
         }
 
-        return (string) ($policy->period_type ?? '') === 'monthly';
+        $periodType = trim((string) ($policy->period_type ?? ''));
+
+        return $periodType === '' || $periodType === 'monthly';
     }
 
     private function qtyDisplay(string $qty): string

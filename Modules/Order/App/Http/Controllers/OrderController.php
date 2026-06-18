@@ -7,8 +7,12 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
+use Modules\Order\App\Mail\AgentOrderCancelledDirectEmployeeMail;
+use Modules\Order\App\Mail\AgentOrderCreatedDirectEmployeeMail;
 use Modules\Order\App\Http\Requests\PreviewOrderRequest;
 use Modules\Order\App\Http\Requests\StoreOrderRequest;
 use Modules\Order\App\Http\Requests\UpdateOrderRequest;
@@ -56,6 +60,7 @@ class OrderController extends BaseApiController
             'month' => ['nullable', 'date_format:Y-m'],
             'status' => ['nullable', Rule::in(['pending', 'approved', 'paid', 'rejected'])],
             'limit' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'all' => ['nullable', Rule::in([0, 1, '0', '1', true, false, 'true', 'false'])],
         ]);
 
         if (! Schema::hasTable('agent_profiles')) {
@@ -71,7 +76,8 @@ class OrderController extends BaseApiController
         }
 
         $beneficiaryUserId = (int) $agentProfile->user_id;
-        $periodMonth = (string) ($validated['month'] ?? now()->format('Y-m'));
+        $allPeriods = $this->parseBooleanQueryValue($validated['all'] ?? false);
+        $periodMonth = $allPeriods ? null : (string) ($validated['month'] ?? now()->format('Y-m'));
         $limit = isset($validated['limit']) ? (int) $validated['limit'] : 20;
         $statusFilter = isset($validated['status']) ? (string) $validated['status'] : null;
 
@@ -90,7 +96,9 @@ class OrderController extends BaseApiController
             ->where('ce.beneficiary_user_id', $beneficiaryUserId)
             ->where('ce.entry_type', '!=', 'discount');
 
-        $this->applyCommissionHistoryMonthFilter($baseQuery, $periodMonth);
+        if ($periodMonth !== null && $periodMonth !== '') {
+            $this->applyCommissionHistoryMonthFilter($baseQuery, $periodMonth);
+        }
 
         if ($statusFilter !== null) {
             $baseQuery->where('ce.settlement_status', $statusFilter);
@@ -252,6 +260,59 @@ class OrderController extends BaseApiController
         ]);
     }
 
+    public function cloneTemplate(int $order): JsonResponse
+    {
+        $query = Order::query()
+            ->with(['shippingAddress', 'items']);
+        $this->applyAuthenticatedAgentOrdersScope($query, auth()->id());
+
+        /** @var Order|null $sourceOrder */
+        $sourceOrder = $query->whereKey($order)->first();
+        if (! $sourceOrder) {
+            return $this->errorResponse('api.errors.not_found', 404, (object) []);
+        }
+
+        $shipping = $sourceOrder->shippingAddress;
+        $customerName = trim((string) ($shipping?->full_name ?? $sourceOrder->customer_name ?? ''));
+        $customerPhone = trim((string) ($shipping?->phone ?? $sourceOrder->customer_phone ?? ''));
+        $addressLine = trim((string) ($shipping?->address_line ?? $sourceOrder->customer_address ?? ''));
+        $provinceCode = trim((string) ($shipping?->province_code ?? ''));
+        $wardCode = trim((string) ($shipping?->ward_code ?? ''));
+
+        $products = $sourceOrder->items
+            ->map(function (OrderItem $item) {
+                return [
+                    'product_id' => (int) $item->product_id,
+                    'quantity' => (float) $item->quantity,
+                ];
+            })
+            ->filter(fn (array $row) => $row['product_id'] > 0 && $row['quantity'] > 0)
+            ->values()
+            ->all();
+
+        if ($products === []) {
+            return $this->validationErrorResponse([
+                'products' => ['Đơn nguồn không có sản phẩm hợp lệ để đặt lại.'],
+            ]);
+        }
+
+        return $this->successResponse('api.order.clone_template_success', [
+            'source_order' => [
+                'id' => $sourceOrder->id,
+                'order_no' => $sourceOrder->order_no,
+            ],
+            'clone_payload' => [
+                'order_channel' => (string) ($sourceOrder->order_channel ?? 'agent_order'),
+                'customer_name' => $customerName,
+                'customer_phone' => $customerPhone,
+                'customer_address' => $addressLine !== '' ? $addressLine : null,
+                'customer_province_code' => $provinceCode,
+                'customer_ward_code' => $wardCode,
+                'products' => $products,
+            ],
+        ]);
+    }
+
     public function preview(PreviewOrderRequest $request): JsonResponse
     {
         $user = $request->user();
@@ -308,152 +369,166 @@ class OrderController extends BaseApiController
     public function store(StoreOrderRequest $request): JsonResponse
     {
         $validated = $request->validated();
-        $generatedOrderNo = $this->generateUniqueOrderNoFromCurrentUserAgentCode();
 
-        if (! $generatedOrderNo) {
-            return $this->errorResponse('api.order.agent_code_not_found', 422, (object) []);
-        }
+        try {
+            $generatedOrderNo = $this->generateUniqueOrderNoFromCurrentUserAgentCode();
 
-        $orderDate = now()->parse($validated['order_date']);
-        $addressAttrs = $this->shippingAddressAttributesFromRequest($validated);
-        $requestedProducts = collect($validated['products'] ?? [])
-            ->map(fn ($row) => [
-                'product_id' => (int) ($row['product_id'] ?? 0),
-                'quantity' => (float) ($row['quantity'] ?? 0),
-            ])
-            ->filter(fn ($row) => $row['product_id'] > 0 && $row['quantity'] > 0)
-            ->values();
+            if (! $generatedOrderNo) {
+                return $this->errorResponse('api.order.agent_code_not_found', 422, (object) []);
+            }
 
-        if ($requestedProducts->isEmpty()) {
-            return $this->validationErrorResponse([
-                'products' => ['Đơn hàng phải có ít nhất 1 sản phẩm hợp lệ.'],
-            ]);
-        }
+            $orderDate = now()->parse($validated['order_date']);
+            $addressAttrs = $this->shippingAddressAttributesFromRequest($validated);
+            $requestedProducts = collect($validated['products'] ?? [])
+                ->map(fn ($row) => [
+                    'product_id' => (int) ($row['product_id'] ?? 0),
+                    'quantity' => (float) ($row['quantity'] ?? 0),
+                ])
+                ->filter(fn ($row) => $row['product_id'] > 0 && $row['quantity'] > 0)
+                ->values();
 
-        $catalogAgentId = auth()->id()
-            ? (int) (DB::table('agents')->where('user_id', auth()->id())->value('id') ?? 0)
-            : 0;
-        $catalogProducts = $this->catalogProductsByAgentId($catalogAgentId > 0 ? $catalogAgentId : null)
-            ->keyBy('id');
+            if ($requestedProducts->isEmpty()) {
+                return $this->validationErrorResponse([
+                    'products' => ['Đơn hàng phải có ít nhất 1 sản phẩm hợp lệ.'],
+                ]);
+            }
 
-        $built = $this->buildOrderLinesFromCatalog($catalogProducts, $requestedProducts);
-        if (isset($built['errors'])) {
-            return $this->validationErrorResponse($built['errors']);
-        }
+            $catalogAgentId = auth()->id()
+                ? (int) (DB::table('agents')->where('user_id', auth()->id())->value('id') ?? 0)
+                : 0;
+            $catalogProducts = $this->catalogProductsByAgentId($catalogAgentId > 0 ? $catalogAgentId : null)
+                ->keyBy('id');
 
-        if ($built['subtotal'] <= 0) {
-            return $this->validationErrorResponse([
-                'products' => ['Đơn hàng 0đ không hợp lệ. Vui lòng kiểm tra giá và số lượng sản phẩm.'],
-            ]);
-        }
+            $built = $this->buildOrderLinesFromCatalog($catalogProducts, $requestedProducts);
+            if (isset($built['errors'])) {
+                return $this->validationErrorResponse($built['errors']);
+            }
 
-        $resolvedAgentProfileId = auth()->id()
-            ? (int) (DB::table('agent_profiles')->where('user_id', auth()->id())->value('id') ?? 0)
-            : 0;
-        if (($validated['order_channel'] ?? '') === 'agent_order' && $resolvedAgentProfileId > 0) {
-            $validated['agent_profile_id'] = $resolvedAgentProfileId;
-        }
+            if ($built['subtotal'] <= 0) {
+                return $this->validationErrorResponse([
+                    'products' => ['Đơn hàng 0đ không hợp lệ. Vui lòng kiểm tra giá và số lượng sản phẩm.'],
+                ]);
+            }
 
-        $pricing = null;
-        if (($validated['order_channel'] ?? '') === 'agent_order' && $resolvedAgentProfileId > 0) {
-            $pricing = $this->orderPricingService->buildPricingPayload(
-                $resolvedAgentProfileId,
-                $orderDate->toDateString(),
-                $orderDate->format('Y-m'),
-                $built['lines'],
-                null,
-            );
-        }
+            $resolvedAgentProfileId = auth()->id()
+                ? (int) (DB::table('agent_profiles')->where('user_id', auth()->id())->value('id') ?? 0)
+                : 0;
+            if (($validated['order_channel'] ?? '') === 'agent_order' && $resolvedAgentProfileId > 0) {
+                $validated['agent_profile_id'] = $resolvedAgentProfileId;
+            }
 
-        $subtotal = $pricing !== null
-            ? (float) $pricing['summary']['subtotal_amount']
-            : (float) $built['subtotal'];
-        $discountAmount = $pricing !== null
-            ? (float) $pricing['summary']['discount_amount']
-            : 0.0;
-        $netAmount = $pricing !== null
-            ? (float) $pricing['summary']['net_amount']
-            : $subtotal;
+            $pricing = null;
+            if (($validated['order_channel'] ?? '') === 'agent_order' && $resolvedAgentProfileId > 0) {
+                $pricing = $this->orderPricingService->buildPricingPayload(
+                    $resolvedAgentProfileId,
+                    $orderDate->toDateString(),
+                    $orderDate->format('Y-m'),
+                    $built['lines'],
+                    null,
+                );
+            }
 
-        $orderItemsPayload = array_map(static function (array $line) {
-            return [
-                'product_id' => (int) $line['product_id'],
-                'product_name_snapshot' => (string) ($line['product_name'] ?? ''),
-                'unit' => (string) ($line['unit'] ?? ''),
-                'quantity' => (float) $line['quantity'],
-                'quantity_in_base_unit' => (float) ($line['quantity_in_base_unit'] ?? $line['quantity']),
-                'unit_price' => (float) $line['unit_price'],
-                'line_amount' => (float) $line['line_amount'],
+            $subtotal = $pricing !== null
+                ? (float) $pricing['summary']['subtotal_amount']
+                : (float) $built['subtotal'];
+            $discountAmount = $pricing !== null
+                ? (float) $pricing['summary']['discount_amount']
+                : 0.0;
+            $netAmount = $pricing !== null
+                ? (float) $pricing['summary']['net_amount']
+                : $subtotal;
+
+            $orderItemsPayload = array_map(static function (array $line) {
+                return [
+                    'product_id' => (int) $line['product_id'],
+                    'product_name_snapshot' => (string) ($line['product_name'] ?? ''),
+                    'unit' => (string) ($line['unit'] ?? ''),
+                    'quantity' => (float) $line['quantity'],
+                    'quantity_in_base_unit' => (float) ($line['quantity_in_base_unit'] ?? $line['quantity']),
+                    'unit_price' => (float) $line['unit_price'],
+                    'line_amount' => (float) $line['line_amount'],
+                ];
+            }, $built['lines']);
+
+            $mergeAmounts = [
+                'order_no' => $generatedOrderNo,
+                'order_date' => $orderDate,
+                'order_month' => $orderDate->format('Y-m'),
+                'subtotal_amount' => $subtotal,
+                'discount_amount' => $discountAmount,
+                'net_amount' => $netAmount,
             ];
-        }, $built['lines']);
 
-        $mergeAmounts = [
-            'order_no' => $generatedOrderNo,
-            'order_date' => $orderDate,
-            'order_month' => $orderDate->format('Y-m'),
-            'subtotal_amount' => $subtotal,
-            'discount_amount' => $discountAmount,
-            'net_amount' => $netAmount,
-        ];
-
-        if ($pricing !== null) {
-            $mergeAmounts['applied_discount_policy_id'] = $pricing['applied_discount_policy_id'];
-            $mergeAmounts['monthly_qty_before'] = $pricing['monthly_qty_before'];
-            $mergeAmounts['monthly_qty_after'] = $pricing['monthly_qty_after'];
-            if ($pricing['discount_snapshot_json'] !== null) {
-                $mergeAmounts['discount_snapshot_json'] = $pricing['discount_snapshot_json'];
+            if ($pricing !== null) {
+                $mergeAmounts['applied_discount_policy_id'] = $pricing['applied_discount_policy_id'];
+                $mergeAmounts['monthly_qty_before'] = $pricing['monthly_qty_before'];
+                $mergeAmounts['monthly_qty_after'] = $pricing['monthly_qty_after'];
+                if ($pricing['discount_snapshot_json'] !== null) {
+                    $mergeAmounts['discount_snapshot_json'] = $pricing['discount_snapshot_json'];
+                }
             }
-        }
 
-        $payload = collect($validated)
-            ->except([
-                'customer_province_code',
-                'customer_district_code',
-                'customer_district_name',
-                'customer_ward_code',
-                'products',
-            ])
-            ->merge($mergeAmounts)
-            ->all();
-
-        $order = DB::transaction(function () use ($payload, $orderItemsPayload, $addressAttrs, $pricing) {
-            $order = Order::query()->create($payload);
-            $items = collect($orderItemsPayload)
-                ->map(fn ($item) => new OrderItem($item))
+            $payload = collect($validated)
+                ->except([
+                    'customer_province_code',
+                    'customer_district_code',
+                    'customer_district_name',
+                    'customer_ward_code',
+                    'products',
+                ])
+                ->merge($mergeAmounts)
                 ->all();
-            $order->items()->saveMany($items);
-            OrderAddress::query()->updateOrCreate(
-                [
-                    'order_id' => $order->id,
-                    'type' => OrderAddress::TYPE_SHIPPING,
-                ],
-                $addressAttrs
-            );
-            $this->upsertDefaultPickupAddressFromShipping($order, $addressAttrs);
-            $order->syncLegacyCustomerColumnsFromShippingAddress();
 
-            if ($pricing !== null
-                && ($pricing['breakdown_rows'] ?? []) !== []
-                && Schema::hasTable('order_discount_breakdowns')) {
-                $this->orderPricingService->persistDiscountBreakdowns($order->id, $pricing['breakdown_rows']);
-            }
+            $order = DB::transaction(function () use ($payload, $orderItemsPayload, $addressAttrs, $pricing) {
+                $order = Order::query()->create($payload);
+                $items = collect($orderItemsPayload)
+                    ->map(fn ($item) => new OrderItem($item))
+                    ->all();
+                $order->items()->saveMany($items);
+                OrderAddress::query()->updateOrCreate(
+                    [
+                        'order_id' => $order->id,
+                        'type' => OrderAddress::TYPE_SHIPPING,
+                    ],
+                    $addressAttrs
+                );
+                $this->upsertDefaultPickupAddressFromShipping($order, $addressAttrs);
+                $order->syncLegacyCustomerColumnsFromShippingAddress();
 
-            return $order->fresh(['shippingAddress', 'latestShipment']);
-        });
+                if ($pricing !== null
+                    && ($pricing['breakdown_rows'] ?? []) !== []
+                    && Schema::hasTable('order_discount_breakdowns')) {
+                    $this->orderPricingService->persistDiscountBreakdowns($order->id, $pricing['breakdown_rows']);
+                }
 
-        return $this->createdResponse('api.order.store_success', [
-            'id' => $order->id,
-            'order_no' => $order->order_no,
-            'order_status' => $order->statusValue(),
-            'order_label_status' => OrderStatus::orderLabelStatusForValue($order->statusValue()),
-            'subtotal_amount' => $this->formatVietnameseMoney($order->subtotal_amount),
-            'discount_amount' => $this->formatVietnameseMoney($order->discount_amount),
-            'net_amount' => $this->formatVietnameseMoney($order->net_amount),
-            ...$order->legacyCustomerAddressForApi(),
-            'latest_shipment' => $order->latestShipment
-                ? $order->latestShipment->toApiArray()
-                : null,
-        ]);
+                return $order->fresh(['shippingAddress', 'latestShipment']);
+            });
+            $this->notifyDirectEmployeeAboutNewAgentOrder($order);
+
+            return $this->createdResponse('api.order.store_success', [
+                'id' => $order->id,
+                'order_no' => $order->order_no,
+                'order_status' => $order->statusValue(),
+                'order_label_status' => OrderStatus::orderLabelStatusForValue($order->statusValue()),
+                'subtotal_amount' => $this->formatVietnameseMoney($order->subtotal_amount),
+                'discount_amount' => $this->formatVietnameseMoney($order->discount_amount),
+                'net_amount' => $this->formatVietnameseMoney($order->net_amount),
+                ...$order->legacyCustomerAddressForApi(),
+                'latest_shipment' => $order->latestShipment
+                    ? $order->latestShipment->toApiArray()
+                    : null,
+            ]);
+        } catch (\Throwable $exception) {
+            Log::error('api.order.store_failed', [
+                'user_id' => auth()->id(),
+                'payload' => $validated,
+                'exception_message' => $exception->getMessage(),
+                'exception_class' => $exception::class,
+                'trace' => $exception->getTraceAsString(),
+            ]);
+
+            return $this->errorResponse('api.order.store_failed', 500, (object) []);
+        }
     }
 
     public function update(UpdateOrderRequest $request, Order $order): JsonResponse
@@ -499,6 +574,69 @@ class OrderController extends BaseApiController
                 ? $order->latestShipment->toApiArray()
                 : null,
         ]);
+    }
+
+    public function destroy(int $order): JsonResponse
+    {
+        $query = Order::query()->whereKey($order);
+        $this->applyAuthenticatedAgentOrdersScope($query, auth()->id());
+        $targetOrder = $query->first();
+
+        if (! $targetOrder) {
+            return $this->errorResponse('api.errors.not_found', 404, (object) []);
+        }
+
+        DB::transaction(function () use ($targetOrder): void {
+            $targetOrder->statusHistories()->delete();
+            $targetOrder->internalNotes()->delete();
+            $targetOrder->shipments()->delete();
+            $targetOrder->addresses()->delete();
+            $targetOrder->items()->delete();
+            $targetOrder->delete();
+        });
+
+        return $this->successResponse('api.order.destroy_success', (object) []);
+    }
+
+    public function cancel(int $order): JsonResponse
+    {
+        $query = Order::query()->whereKey($order);
+        $this->applyAuthenticatedAgentOrdersScope($query, auth()->id());
+        $targetOrder = $query->first();
+
+        if (! $targetOrder) {
+            return $this->errorResponse('api.errors.not_found', 404, (object) []);
+        }
+
+        $currentStatus = (string) $targetOrder->statusValue();
+        if (in_array($currentStatus, [OrderStatus::CANCELLED->value, OrderStatus::RETURNED->value], true)) {
+            return $this->successResponse('api.order.cancel_already_done', (object) []);
+        }
+
+        if ($currentStatus !== OrderStatus::NEW->value) {
+            return $this->errorResponse('api.order.cancel_not_allowed', 422, (object) [], [
+                'order_no' => (string) $targetOrder->order_no,
+            ]);
+        }
+
+        DB::transaction(function () use ($targetOrder, $currentStatus): void {
+            $targetOrder->update(['order_status' => OrderStatus::CANCELLED->value]);
+
+            if (Schema::hasTable('order_status_histories')) {
+                $targetOrder->statusHistories()->create([
+                    'from_status' => $currentStatus,
+                    'to_status' => OrderStatus::CANCELLED->value,
+                    'source_type' => 'api',
+                    'source_ref_id' => null,
+                    'changed_by_user_id' => auth()->id(),
+                    'note' => 'Agent cancelled order from mobile app.',
+                ]);
+            }
+        });
+        $targetOrder->refresh();
+        $this->notifyDirectEmployeeAboutCancelledAgentOrder($targetOrder);
+
+        return $this->successResponse('api.order.cancel_success', (object) []);
     }
 
     /**
@@ -667,6 +805,21 @@ class OrderController extends BaseApiController
         $normalized = is_string($value) ? trim($value) : (string) $value;
 
         return bcadd($normalized, '0', 2);
+    }
+
+    private function parseBooleanQueryValue(mixed $value): bool
+    {
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        if (is_int($value)) {
+            return $value === 1;
+        }
+
+        $normalized = strtolower(trim((string) $value));
+
+        return in_array($normalized, ['1', 'true'], true);
     }
 
     private function buildAbsoluteImageUrl(?string $imagePath): ?string
@@ -969,6 +1122,169 @@ class OrderController extends BaseApiController
         }
 
         return 0.0;
+    }
+
+    private function notifyDirectEmployeeAboutNewAgentOrder(Order $order): void
+    {
+        $authUserId = auth()->id();
+        if (! $authUserId || ! Schema::hasTable('agents')) {
+            return;
+        }
+
+        $agentRow = DB::table('agents')
+            ->where('user_id', $authUserId)
+            ->first(['id', 'code', 'name', 'direct_employee_name']);
+
+        if (! $agentRow) {
+            return;
+        }
+
+        $directEmployeeName = trim((string) ($agentRow->direct_employee_name ?? ''));
+        if ($directEmployeeName === '') {
+            return;
+        }
+
+        $recipient = $this->resolveDirectEmployeeNotificationRecipient($directEmployeeName);
+        if ($recipient === null) {
+            Log::info('api.order.store_direct_employee_recipient_not_found', [
+                'order_id' => $order->id,
+                'order_no' => $order->order_no,
+                'agent_id' => $agentRow->id,
+                'agent_code' => $agentRow->code,
+                'direct_employee_name' => $directEmployeeName,
+            ]);
+
+            return;
+        }
+
+        try {
+            Mail::to($recipient['email'])->send(new AgentOrderCreatedDirectEmployeeMail(
+                orderNo: (string) $order->order_no,
+                orderDate: $order->order_date?->format('d/m/Y H:i') ?? now()->format('d/m/Y H:i'),
+                orderStatusLabel: OrderStatus::orderLabelStatusForValue($order->statusValue()),
+                customerName: trim((string) ($order->customer_name ?? '')) ?: '—',
+                netAmountFormatted: $this->formatVietnameseMoney($order->net_amount),
+                currency: $this->vietnameseMoneyCurrency(),
+                agentCode: trim((string) ($agentRow->code ?? '')) ?: '—',
+                agentName: trim((string) ($agentRow->name ?? '')) ?: '—',
+                directEmployeeName: $recipient['name'],
+            ));
+        } catch (\Throwable $mailException) {
+            Log::warning('api.order.store_direct_employee_mail_failed', [
+                'order_id' => $order->id,
+                'order_no' => $order->order_no,
+                'agent_id' => $agentRow->id,
+                'agent_code' => $agentRow->code,
+                'direct_employee_email' => $recipient['email'],
+                'exception_message' => $mailException->getMessage(),
+                'exception_class' => $mailException::class,
+            ]);
+        }
+    }
+
+    private function notifyDirectEmployeeAboutCancelledAgentOrder(Order $order): void
+    {
+        $authUserId = auth()->id();
+        if (! $authUserId || ! Schema::hasTable('agents')) {
+            return;
+        }
+
+        $agentRow = DB::table('agents')
+            ->where('user_id', $authUserId)
+            ->first(['id', 'code', 'name', 'direct_employee_name']);
+
+        if (! $agentRow) {
+            return;
+        }
+
+        $directEmployeeName = trim((string) ($agentRow->direct_employee_name ?? ''));
+        if ($directEmployeeName === '') {
+            return;
+        }
+
+        $recipient = $this->resolveDirectEmployeeNotificationRecipient($directEmployeeName);
+        if ($recipient === null) {
+            Log::info('api.order.cancel_direct_employee_recipient_not_found', [
+                'order_id' => $order->id,
+                'order_no' => $order->order_no,
+                'agent_id' => $agentRow->id,
+                'agent_code' => $agentRow->code,
+                'direct_employee_name' => $directEmployeeName,
+            ]);
+
+            return;
+        }
+
+        try {
+            Mail::to($recipient['email'])->send(new AgentOrderCancelledDirectEmployeeMail(
+                orderNo: (string) $order->order_no,
+                cancelledAt: now()->format('d/m/Y H:i'),
+                customerName: trim((string) ($order->customer_name ?? '')) ?: '—',
+                netAmountFormatted: $this->formatVietnameseMoney($order->net_amount),
+                currency: $this->vietnameseMoneyCurrency(),
+                agentCode: trim((string) ($agentRow->code ?? '')) ?: '—',
+                agentName: trim((string) ($agentRow->name ?? '')) ?: '—',
+                directEmployeeName: $recipient['name'],
+            ));
+        } catch (\Throwable $mailException) {
+            Log::warning('api.order.cancel_direct_employee_mail_failed', [
+                'order_id' => $order->id,
+                'order_no' => $order->order_no,
+                'agent_id' => $agentRow->id,
+                'agent_code' => $agentRow->code,
+                'direct_employee_email' => $recipient['email'],
+                'exception_message' => $mailException->getMessage(),
+                'exception_class' => $mailException::class,
+            ]);
+        }
+    }
+
+    /**
+     * @return array{name: string, email: string}|null
+     */
+    private function resolveDirectEmployeeNotificationRecipient(string $directEmployeeName): ?array
+    {
+        if (! Schema::hasTable('employees')) {
+            return null;
+        }
+
+        $query = DB::table('employees')
+            ->whereRaw('LOWER(TRIM(full_name)) = ?', [strtolower(trim($directEmployeeName))]);
+
+        if (Schema::hasColumn('employees', 'is_active')) {
+            $query->where('is_active', 1);
+        }
+
+        $select = ['full_name'];
+        if (Schema::hasColumn('employees', 'user_id')) {
+            $select[] = 'user_id';
+        }
+        if (Schema::hasColumn('employees', 'email')) {
+            $select[] = 'email';
+        }
+
+        $employee = $query->first($select);
+        if (! $employee) {
+            return null;
+        }
+
+        $email = '';
+        if (isset($employee->user_id) && $employee->user_id !== null && Schema::hasTable('users')) {
+            $email = trim((string) (DB::table('users')->where('id', (int) $employee->user_id)->value('email') ?? ''));
+        }
+
+        if ($email === '' && isset($employee->email)) {
+            $email = trim((string) $employee->email);
+        }
+
+        if ($email === '' || ! filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            return null;
+        }
+
+        return [
+            'name' => trim((string) ($employee->full_name ?? $directEmployeeName)) ?: $directEmployeeName,
+            'email' => $email,
+        ];
     }
 
 }

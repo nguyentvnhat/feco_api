@@ -399,7 +399,7 @@
           "name": "Order History Commission",
           "request": {
             "method": "GET",
-            "description": "Hoa hồng của đại lý đang đăng nhập (commission_entries theo beneficiary_user_id, loại trừ entry_type=discount). Query: month (YYYY-MM), status (pending|approved|paid|rejected), limit (mặc định 20).",
+            "description": "Hoa hồng của đại lý đang đăng nhập (commission_entries theo beneficiary_user_id, loại trừ entry_type=discount). Query: month (YYYY-MM), all=1 để xem tất cả tháng, status (pending|approved|paid|rejected), limit (mặc định 20).",
             "header": [
               {
                 "key": "Accept",
@@ -407,7 +407,7 @@
               }
             ],
             "url": {
-              "raw": "{{base_url}}/api/v1/order/history-commission?month=&status=&limit=20",
+              "raw": "{{base_url}}/api/v1/order/history-commission?month=&all=&status=&limit=20",
               "host": [
                 "{{base_url}}"
               ],
@@ -422,6 +422,11 @@
                   "key": "month",
                   "value": "",
                   "description": "optional | YYYY-MM (mặc định tháng hiện tại)"
+                },
+                {
+                  "key": "all",
+                  "value": "",
+                  "description": "optional | 1/true để bỏ lọc tháng và xem tất cả"
                 },
                 {
                   "key": "status",
@@ -940,6 +945,97 @@
               }
             }
           ]
+        },
+        {
+          "name": "Cancel Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders/{{order_id}}/cancel",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{order_id}}",
+                "cancel"
+              ]
+            },
+            "description": "Huỷ mềm đơn hàng của đại lý đăng nhập: chỉ chuyển trạng thái sang cancelled (không xoá bản ghi). Chỉ cho phép khi đơn đang ở trạng thái new."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cancel order status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Cancel order response uses common wrapper', function () {",
+                  "    pm.expect(res).to.have.property('success', true);",
+                  "    pm.expect(res).to.have.property('message');",
+                  "    pm.expect(res).to.have.property('data');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete Order",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders/{{order_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{order_id}}"
+              ]
+            },
+            "description": "Xóa đơn hàng của đại lý đang đăng nhập theo phạm vi agent_profile_id/seller_user_id. Trả 404 nếu không tìm thấy hoặc không có quyền trên đơn."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Delete order status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Delete order response uses common wrapper', function () {",
+                  "    pm.expect(res).to.have.property('success', true);",
+                  "    pm.expect(res).to.have.property('message');",
+                  "    pm.expect(res).to.have.property('data');",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -1001,6 +1097,9 @@
                   "    pm.expect(res.data).to.have.property('parent_agent');",
                   "    pm.expect(res.data).to.have.property('agents');",
                   "    pm.expect(res.data.agents).to.be.an('array');",
+                  "    if (res.data.agents.length > 0) {",
+                  "        pm.expect(res.data.agents[0]).to.have.property('latest_order_at');",
+                  "    }",
                   "});"
                 ]
               }

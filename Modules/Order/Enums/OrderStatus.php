@@ -62,8 +62,7 @@ enum OrderStatus: string
     public static function soldLikeValues(): array
     {
         return [
-            self::TPL_CONFIRMED->value,
-            self::DELIVERED->value,
+            self::READY_TO_SHIP->value,
         ];
     }
 
