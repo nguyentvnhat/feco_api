@@ -449,10 +449,12 @@ class OrderPricingService
     private function isMonthlyPolicy(object $policy): bool
     {
         if (! Schema::hasColumn('commission_policies', 'period_type')) {
-            return false;
+            return true;
         }
 
-        return (string) ($policy->period_type ?? '') === 'monthly';
+        $periodType = trim((string) ($policy->period_type ?? ''));
+
+        return $periodType === '' || $periodType === 'monthly';
     }
 
     private function qtyDisplay(string $qty): string
