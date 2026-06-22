@@ -17,6 +17,7 @@ use Modules\Order\App\Http\Requests\PreviewOrderRequest;
 use Modules\Order\App\Http\Requests\StoreOrderRequest;
 use Modules\Order\App\Http\Requests\UpdateOrderRequest;
 use Modules\Order\App\Services\OrderPricingService;
+use Modules\Order\App\Services\ProductUnitConverter;
 use Modules\Order\Enums\OrderStatus;
 use Modules\Order\Models\Order;
 use Modules\Order\Models\OrderAddress;
@@ -192,7 +193,9 @@ class OrderController extends BaseApiController
                         'id' => (int) $product->id,
                         'sku' => $product->sku,
                         'name' => $product->name,
-                        'base_unit' => $product->base_unit,
+                        'base_unit' => Schema::hasColumn('products', 'sale_unit')
+                            ? ($product->sale_unit ?? $product->base_unit)
+                            : $product->base_unit,
                         'unit_price' => $this->formatVietnameseMoney($product->unit_price),
                         'currency' => $this->vietnameseMoneyCurrency(),
                     ];
@@ -969,6 +972,7 @@ class OrderController extends BaseApiController
      */
     private function buildOrderLinesFromCatalog(Collection $catalogProducts, Collection $requestedProducts): array
     {
+        $converter = app(ProductUnitConverter::class);
         $lines = [];
         $subtotal = 0.0;
         foreach ($requestedProducts as $row) {
@@ -986,12 +990,22 @@ class OrderController extends BaseApiController
             $lineAmount = round($unitPrice * $quantity, 2);
             $subtotal += $lineAmount;
 
+            try {
+                $quantities = $converter->buildOrderLineQuantities($product, $quantity);
+            } catch (\RuntimeException $e) {
+                return [
+                    'errors' => [
+                        'products' => ["Sản phẩm #{$row['product_id']}: ".$e->getMessage()],
+                    ],
+                ];
+            }
+
             $lines[] = [
                 'product_id' => (int) $product->id,
                 'product_name' => (string) ($product->name ?? ''),
-                'unit' => (string) ($product->base_unit ?? ''),
-                'quantity' => $quantity,
-                'quantity_in_base_unit' => $quantity,
+                'unit' => $quantities['unit'],
+                'quantity' => $quantities['quantity'],
+                'quantity_in_base_unit' => $quantities['quantity_in_base_unit'],
                 'unit_price' => $unitPrice,
                 'line_amount' => $lineAmount,
             ];
@@ -1072,7 +1086,10 @@ class OrderController extends BaseApiController
     {
         $query = DB::table('products')
             ->join('agent_products', 'agent_products.product_id', '=', 'products.id')
+            ->join('product_categories as pc', 'pc.id', '=', 'products.product_category_id')
             ->where('agent_products.agent_id', $agentId)
+            ->where('pc.code', 'AUTO_FECO_X3')
+            ->where('products.is_active', 1)
             ->orderBy('products.name')
             ->select([
                 'products.id',
@@ -1081,6 +1098,10 @@ class OrderController extends BaseApiController
                 'products.base_unit',
                 'agent_products.product_id as ap_product_id',
             ]);
+
+        if (Schema::hasColumn('products', 'sale_unit')) {
+            $query->addSelect('products.sale_unit');
+        }
 
         if (Schema::hasColumn('agent_products', 'unit_price')) {
             $query->addSelect('agent_products.unit_price as ap_unit_price');
