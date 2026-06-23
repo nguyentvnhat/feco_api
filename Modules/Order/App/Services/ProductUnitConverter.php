@@ -10,15 +10,30 @@ class ProductUnitConverter
 {
     public function resolveSaleUnit(object $product): string
     {
-        $saleUnit = Schema::hasColumn('products', 'sale_unit')
-            ? trim((string) ($product->sale_unit ?? ''))
-            : '';
-
-        if ($saleUnit !== '') {
-            return $saleUnit;
+        if (Schema::hasColumn('products', 'sale_unit')) {
+            $saleUnit = trim((string) ($product->sale_unit ?? ''));
+            if ($saleUnit !== '') {
+                return $saleUnit;
+            }
         }
 
-        return trim((string) ($product->base_unit ?? 'box')) ?: 'box';
+        $productId = (int) ($product->id ?? 0);
+        $baseUnit = $this->resolveBaseUnit($product);
+
+        // App đặt theo hộp; nếu DB chưa có cột sale_unit, suy ra từ quy đổi box → thanh.
+        if ($productId > 0 && Schema::hasTable('product_unit_conversions')) {
+            $hasBoxToBase = DB::table('product_unit_conversions')
+                ->where('product_id', $productId)
+                ->where('from_unit', 'box')
+                ->where('to_unit', $baseUnit)
+                ->exists();
+
+            if ($hasBoxToBase) {
+                return 'box';
+            }
+        }
+
+        return $baseUnit;
     }
 
     public function resolveBaseUnit(object $product): string
