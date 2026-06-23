@@ -119,7 +119,7 @@ class OrderPricingService
             'monthly_context' => [
                 'is_monthly' => $isMonthly,
                 'order_month' => $orderMonthYm,
-                'calculation_base' => 'quantity',
+                'calculation_base' => (string) ($policy->calculation_base ?? 'quantity'),
                 'previous_month_quantity' => $this->qtyDisplay($monthlyQtyBefore),
                 'monthly_qty_before' => $this->qtyDisplay($monthlyQtyBefore),
                 'monthly_qty_after' => $this->qtyDisplay($monthlyQtyAfter),
@@ -384,7 +384,7 @@ class OrderPricingService
             'policy_id' => (int) $policy->id,
             'policy_code' => (string) ($policy->policy_code ?? ''),
             'calculation_method' => $calculationMethod,
-            'calculation_base' => 'quantity',
+            'calculation_base' => (string) ($policy->calculation_base ?? 'quantity'),
             'monthly_qty_before' => $this->qtyDisplay($ladderBefore),
             'monthly_qty_after' => $this->qtyDisplay($ladderAfter),
             'total_discount_amount' => $engineResult['total_discount_amount'],
@@ -501,7 +501,7 @@ class OrderPricingService
             'monthly_context' => [
                 'is_monthly' => $isMonthly,
                 'order_month' => $orderMonthYm,
-                'calculation_base' => 'quantity',
+                'calculation_base' => (string) ($policy?->calculation_base ?? 'quantity'),
                 'previous_month_quantity' => $this->qtyDisplay($monthlyQtyBefore),
                 'monthly_qty_before' => $this->qtyDisplay($monthlyQtyBefore),
                 'monthly_qty_after' => $this->qtyDisplay($monthlyQtyAfter),

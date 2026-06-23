@@ -113,7 +113,7 @@ final class OrderTierDiscountEngine
                         ? self::qtyFormat4($tierMax)
                         : null,
                     'calculation_method' => 'progressive',
-                    'basis_rule' => 'unit_price_times_quantity_in_tier',
+                    'basis_rule' => 'line_amount_proportional_to_base_units_in_tier',
                 ],
             ];
         }
@@ -212,9 +212,13 @@ final class OrderTierDiscountEngine
     }
 
     /**
-     * Tiền gốc (chưa chiết khấu) của các **đơn vị** thứ kStart..kEnd trong giỏ (đếm từ 1 theo thứ tự dòng sản phẩm).
+     * Tiền gốc (chưa chiết khấu) của các **đơn vị cơ sở** thứ kStart..kEnd trong giỏ (đếm từ 1 theo thứ tự dòng sản phẩm).
      *
-     * @param  list<array{quantity_in_base_unit?:string|float|int|null, quantity?:string|float|int|null, unit_price?:string|float|int|null}>  $lines
+     * Khi `quantity_in_base_unit` khác `quantity` (vd. đặt theo hộp, bậc theo thanh), dùng tỷ lệ
+     * `line_amount × overlap_units / quantity_in_base_unit` thay vì `unit_price × overlap_units`
+     * vì `unit_price` là giá theo đơn vị bán (hộp), không phải đơn vị cơ sở (thanh).
+     *
+     * @param  list<array{quantity_in_base_unit?:string|float|int|null, quantity?:string|float|int|null, unit_price?:string|float|int|null, line_amount?:string|float|int|null}>  $lines
      */
     private static function basisMoneyForOrderUnitInterval(array $lines, string $kStart, string $kEnd): string
     {
@@ -228,6 +232,7 @@ final class OrderTierDiscountEngine
         foreach ($lines as $line) {
             $q = self::toBc((string) ($line['quantity_in_base_unit'] ?? $line['quantity'] ?? '0'), '4');
             $p = self::toBc((string) ($line['unit_price'] ?? '0'), '2');
+            $lineAmount = self::toBc((string) ($line['line_amount'] ?? '0'), '2');
             if (bccomp($q, '0', 4) <= 0) {
                 continue;
             }
@@ -240,7 +245,11 @@ final class OrderTierDiscountEngine
 
             if (bccomp($ovS, $ovE, 4) <= 0) {
                 $units = self::bcAdd(self::bcSub($ovE, $ovS, 4), '1', 4);
-                $lineBasis = bcmul($p, $units, self::BC + 4);
+                if (bccomp($lineAmount, '0', 2) > 0) {
+                    $lineBasis = bcdiv(bcmul($lineAmount, $units, self::BC + 4), $q, self::BC + 4);
+                } else {
+                    $lineBasis = bcmul($p, $units, self::BC + 4);
+                }
                 $basis = bcadd($basis, $lineBasis, self::BC);
             }
 

@@ -187,15 +187,16 @@ class OrderController extends BaseApiController
 
         $products = collect();
         if ($agentId) {
+            $converter = app(ProductUnitConverter::class);
             $products = $this->catalogProductsByAgentId($agentId)
-                ->map(function ($product) {
+                ->map(function ($product) use ($converter) {
                     return [
                         'id' => (int) $product->id,
                         'sku' => $product->sku,
                         'name' => $product->name,
-                        'base_unit' => Schema::hasColumn('products', 'sale_unit')
-                            ? ($product->sale_unit ?? $product->base_unit)
-                            : $product->base_unit,
+                        'base_unit' => $converter->resolveSaleUnit($product),
+                        'sale_unit' => $converter->resolveSaleUnit($product),
+                        'quantity_base_unit' => $converter->resolveBaseUnit($product),
                         'unit_price' => $this->formatVietnameseMoney($product->unit_price),
                         'currency' => $this->vietnameseMoneyCurrency(),
                     ];
