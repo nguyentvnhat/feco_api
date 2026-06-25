@@ -83,4 +83,38 @@ class ProductUnitConverter
             'quantity_in_base_unit' => $this->toBaseUnitQuantity($productId, $baseUnit, $saleUnit, $saleQuantity),
         ];
     }
+
+    /**
+     * `products.list_price` is always per {@see resolveBaseUnit()} (e.g. bar).
+     */
+    public function baseUnitListPrice(object $product): ?float
+    {
+        if (! isset($product->list_price) || $product->list_price === null || $product->list_price === '') {
+            return null;
+        }
+
+        return round((float) $product->list_price, 2);
+    }
+
+    /**
+     * Reference price per sale unit (e.g. box) derived from base-unit list price.
+     */
+    public function saleUnitListPrice(object $product, ?float $baseUnitListPrice = null): ?float
+    {
+        $basePrice = $baseUnitListPrice ?? $this->baseUnitListPrice($product);
+        if ($basePrice === null) {
+            return null;
+        }
+
+        $saleUnit = $this->resolveSaleUnit($product);
+        $baseUnit = $this->resolveBaseUnit($product);
+        if ($saleUnit === $baseUnit) {
+            return $basePrice;
+        }
+
+        $productId = (int) ($product->id ?? 0);
+        $multiplier = $this->toBaseUnitQuantity($productId, $baseUnit, $saleUnit, 1);
+
+        return round($basePrice * $multiplier, 2);
+    }
 }

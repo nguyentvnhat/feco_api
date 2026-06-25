@@ -20,6 +20,8 @@ return [
         'show_success' => 'Order detail loaded successfully.',
         'history_commission_success' => 'Agent commission history loaded successfully.',
         'history_commission_no_agent_profile' => 'This account has no agent profile to view commission history.',
+        'history_discount_success' => 'Agent discount history loaded successfully.',
+        'history_discount_no_agent_profile' => 'This account has no agent profile to view discount history.',
         'statuses_success' => 'Order status list loaded successfully.',
         'store_success' => 'Order created successfully.',
         'store_failed' => 'An error occurred while creating the order. Please try again.',
