@@ -190,13 +190,21 @@ class OrderController extends BaseApiController
             $converter = app(ProductUnitConverter::class);
             $products = $this->catalogProductsByAgentId($agentId)
                 ->map(function ($product) use ($converter) {
+                    $baseListPrice = $converter->baseUnitListPrice($product);
+                    $saleListPrice = $converter->saleUnitListPrice($product, $baseListPrice);
+
                     return [
                         'id' => (int) $product->id,
                         'sku' => $product->sku,
                         'name' => $product->name,
-                        'base_unit' => $converter->resolveSaleUnit($product),
+                        'base_unit' => $converter->resolveBaseUnit($product),
                         'sale_unit' => $converter->resolveSaleUnit($product),
-                        'quantity_base_unit' => $converter->resolveBaseUnit($product),
+                        'list_price_base_unit' => $baseListPrice !== null
+                            ? $this->formatVietnameseMoney($baseListPrice)
+                            : null,
+                        'list_price_sale_unit' => $saleListPrice !== null
+                            ? $this->formatVietnameseMoney($saleListPrice)
+                            : null,
                         'unit_price' => $this->formatVietnameseMoney($product->unit_price),
                         'currency' => $this->vietnameseMoneyCurrency(),
                     ];
@@ -1121,29 +1129,51 @@ class OrderController extends BaseApiController
         }
 
         return $query->get()->map(function ($row) {
-            $unitPrice = $this->resolveProductUnitPrice($row);
+            $converter = app(ProductUnitConverter::class);
+            $unitPrice = $this->resolveProductUnitPrice($row, $converter);
             $row->unit_price = $unitPrice;
+            $row->list_price_base_unit = $this->resolveProductBaseListPrice($row);
+            $row->list_price_sale_unit = $converter->saleUnitListPrice(
+                $row,
+                $row->list_price_base_unit
+            );
 
             return $row;
         });
     }
 
-    private function resolveProductUnitPrice(object $row): float
+    private function resolveProductBaseListPrice(object $row): ?float
     {
-        $candidates = [
-            $row->ap_unit_price ?? null,
-            $row->ap_price ?? null,
+        foreach ([
+            $row->product_list_price ?? null,
             $row->product_unit_price ?? null,
             $row->product_price ?? null,
-            $row->product_list_price ?? null,
-        ];
-        foreach ($candidates as $candidate) {
+        ] as $candidate) {
+            if (is_numeric($candidate)) {
+                return round((float) $candidate, 2);
+            }
+        }
+
+        return null;
+    }
+
+    private function resolveProductUnitPrice(object $row, ProductUnitConverter $converter): float
+    {
+        foreach ([
+            $row->ap_unit_price ?? null,
+            $row->ap_price ?? null,
+        ] as $candidate) {
             if (is_numeric($candidate)) {
                 return (float) $candidate;
             }
         }
 
-        return 0.0;
+        $baseListPrice = $this->resolveProductBaseListPrice($row);
+        if ($baseListPrice === null) {
+            return 0.0;
+        }
+
+        return (float) ($converter->saleUnitListPrice($row, $baseListPrice) ?? 0.0);
     }
 
     private function notifyDirectEmployeeAboutNewAgentOrder(Order $order): void
