@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
+use Modules\Agent\Support\AgentOrderScope;
 use Modules\Order\App\Mail\AgentOrderCancelledDirectEmployeeMail;
 use Modules\Order\App\Mail\AgentOrderCreatedDirectEmployeeMail;
 use Modules\Order\App\Http\Requests\PreviewOrderRequest;
@@ -22,6 +23,8 @@ use Modules\Order\Enums\OrderStatus;
 use Modules\Order\Models\Order;
 use Modules\Order\Models\OrderAddress;
 use Modules\Order\Models\OrderItem;
+use Modules\Order\Support\OrderDisplayPricing;
+use Modules\Order\Support\OrderVatBreakdown;
 
 /**
  * Ví dụ API: trả về địa chỉ theo format legacy (customer_*) từ shippingAddress.
@@ -147,6 +150,107 @@ class OrderController extends BaseApiController
         ]);
     }
 
+    public function historyDiscount(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (! $user) {
+            return $this->errorResponse('api.auth.invalid_credentials', 401, (object) []);
+        }
+
+        $validated = $request->validate([
+            'month' => ['nullable', 'date_format:Y-m'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'all' => ['nullable', Rule::in([0, 1, '0', '1', true, false, 'true', 'false'])],
+        ]);
+
+        if (! Schema::hasTable('agent_profiles')) {
+            return $this->errorResponse('api.order.history_discount_no_agent_profile', 422, (object) []);
+        }
+
+        $agentProfile = DB::table('agent_profiles')
+            ->where('user_id', $user->id)
+            ->first(['id', 'user_id']);
+
+        if ($agentProfile === null) {
+            return $this->errorResponse('api.order.history_discount_no_agent_profile', 422, (object) []);
+        }
+
+        $allPeriods = $this->parseBooleanQueryValue($validated['all'] ?? false);
+        $periodMonth = $allPeriods ? null : (string) ($validated['month'] ?? now()->format('Y-m'));
+        $limit = isset($validated['limit']) ? (int) $validated['limit'] : 20;
+
+        $emptyPayload = [
+            'period_month' => $periodMonth,
+            'summary' => $this->formatDiscountHistorySummary(0, 0),
+            'entries' => [],
+        ];
+
+        if (! Schema::hasTable('orders') || ! Schema::hasColumn('orders', 'agent_profile_id')) {
+            return $this->successResponse('api.order.history_discount_success', $emptyPayload);
+        }
+
+        $ordersQuery = Order::query()
+            ->with('items')
+            ->where('agent_profile_id', (int) $agentProfile->id)
+            ->orderByDesc('order_date')
+            ->orderByDesc('id');
+
+        if ($periodMonth !== null && $periodMonth !== '') {
+            if (Schema::hasColumn('orders', 'order_month')) {
+                $ordersQuery->where('order_month', $periodMonth);
+            } elseif (Schema::hasColumn('orders', 'order_date')) {
+                $ordersQuery->whereRaw("DATE_FORMAT(order_date, '%Y-%m') = ?", [$periodMonth]);
+            }
+        }
+
+        $pricing = app(OrderDisplayPricing::class);
+        $discountRows = [];
+
+        foreach ($ordersQuery->get() as $order) {
+            $discount = $pricing->paymentBreakdown($order)['discount_amount'];
+            if ($discount <= 0.009) {
+                continue;
+            }
+
+            $discountRows[] = [
+                'order' => $order,
+                'discount' => $discount,
+            ];
+        }
+
+        $totalDiscount = array_sum(array_column($discountRows, 'discount'));
+
+        $entries = collect($discountRows)
+            ->take($limit)
+            ->map(function (array $row) {
+                /** @var Order $order */
+                $order = $row['order'];
+                $discount = (float) $row['discount'];
+
+                return [
+                    'id' => (int) $order->id,
+                    'order_id' => (int) $order->id,
+                    'order_no' => (string) $order->order_no,
+                    'amount' => $this->formatVietnameseMoney($discount),
+                    'rate_percent' => null,
+                    'basis_type' => null,
+                    'basis_value' => null,
+                    'settlement_status' => $order->statusValue(),
+                    'settlement_status_label_vi' => OrderStatus::orderLabelStatusForValue($order->statusValue()),
+                    'created_at' => $order->order_date?->toIso8601String()
+                        ?? $order->created_at?->toIso8601String(),
+                ];
+            })
+            ->values()
+            ->all();
+
+        return $this->successResponse('api.order.history_discount_success', [
+            'period_month' => $periodMonth,
+            'summary' => $this->formatDiscountHistorySummary($totalDiscount, count($discountRows)),
+            'entries' => $entries,
+        ]);
+    }
+
     public function index(Request $request): JsonResponse
     {
         $userId = auth()->id();
@@ -178,6 +282,53 @@ class OrderController extends BaseApiController
         return $this->successResponse('api.order.index_success', $this->buildOrdersListPayload($userId, $limit, $keyword, $page));
     }
 
+    public function childAgentOrders(Request $request, int $childAgent): JsonResponse
+    {
+        $userId = auth()->id();
+        $parentAgentId = DB::table('agents')->where('user_id', $userId)->value('id');
+        if ($parentAgentId === null) {
+            return $this->errorResponse('api.agent.current_agent_not_found', 422, (object) []);
+        }
+
+        $child = DB::table('agents')
+            ->where('id', $childAgent)
+            ->where('parent_agent_id', (int) $parentAgentId)
+            ->first(['id', 'user_id', 'code']);
+
+        if ($child === null) {
+            return $this->errorResponse('api.errors.not_found', 404, (object) []);
+        }
+
+        $agentProfileId = AgentOrderScope::resolveAgentProfileId($child);
+        $sellerUserId = AgentOrderScope::sellerUserIdForAgent($child);
+        if ($agentProfileId === null && $sellerUserId === null) {
+            return $this->successResponse('api.order.index_success', [
+                'orders' => [],
+                'meta' => [
+                    'page' => 1,
+                    'per_page' => 10,
+                    'total' => 0,
+                    'has_more' => false,
+                ],
+            ]);
+        }
+
+        $validated = $request->validate([
+            'q' => ['nullable', 'string'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'page' => ['nullable', 'integer', 'min:1'],
+        ]);
+
+        $keyword = trim((string) ($validated['q'] ?? ''));
+        $limit = isset($validated['limit']) ? (int) $validated['limit'] : null;
+        $page = isset($validated['page']) ? (int) $validated['page'] : 1;
+
+        return $this->successResponse(
+            'api.order.index_success',
+            $this->buildOrdersListPayload(null, $limit, $keyword !== '' ? $keyword : null, $page, $agentProfileId, $sellerUserId)
+        );
+    }
+
     public function create(): JsonResponse
     {
         $userId = auth()->id();
@@ -197,15 +348,10 @@ class OrderController extends BaseApiController
                         'id' => (int) $product->id,
                         'sku' => $product->sku,
                         'name' => $product->name,
-                        'base_unit' => $converter->resolveBaseUnit($product),
                         'sale_unit' => $converter->resolveSaleUnit($product),
-                        'list_price_base_unit' => $baseListPrice !== null
-                            ? $this->formatVietnameseMoney($baseListPrice)
-                            : null,
-                        'list_price_sale_unit' => $saleListPrice !== null
+                        'unit_price' => $saleListPrice !== null
                             ? $this->formatVietnameseMoney($saleListPrice)
-                            : null,
-                        'unit_price' => $this->formatVietnameseMoney($product->unit_price),
+                            : $this->formatVietnameseMoney($product->unit_price),
                         'currency' => $this->vietnameseMoneyCurrency(),
                     ];
                 })
@@ -235,41 +381,32 @@ class OrderController extends BaseApiController
             ->whereIn('id', $order->items->pluck('product_id')->filter()->unique()->values())
             ->pluck('image_path', 'id');
 
-        return $this->successResponse('api.order.show_success', [
-            'id' => $order->id,
-            'order_no' => $order->order_no,
-            'order_date' => $order->order_date?->toIso8601String(),
-            'order_status' => $order->statusValue(),
-            'order_label_status' => OrderStatus::orderLabelStatusForValue($order->statusValue()),
-            'order_channel' => $order->order_channel,
-            'subtotal_amount' => $this->formatVietnameseMoney($order->subtotal_amount),
-            'discount_amount' => $this->formatVietnameseMoney($order->discount_amount),
-            'applied_tiers' => $this->formatAppliedTiersFromOrderDiscountSnapshot($order),
-            'net_amount' => $this->formatVietnameseMoney($order->net_amount),
-            'currency' => $this->vietnameseMoneyCurrency(),
-            ...$order->legacyCustomerAddressForApi(),
-            'shipping' => $order->shippingAddress,
-            'pickup' => $order->pickupAddress,
-            'has_invoice_file' => $order->invoice_file_path !== null,
-            'has_delivery_receipt_paths' => $order->delivery_receipt_paths !== null,
-            'products' => $order->items->map(function ($item) use ($productImagePathsById) {
-                return [
-                    'id' => $item->id,
-                    'product_id' => $item->product_id,
-                    'product_name' => $item->product_name_snapshot,
-                    'image_path' => $this->buildAbsoluteImageUrl($productImagePathsById->get($item->product_id)),
-                    'unit' => $item->unit,
-                    'quantity' => (float) $item->quantity,
-                    'quantity_in_base_unit' => (float) $item->quantity_in_base_unit,
-                    'unit_price' => $this->formatVietnameseMoney($item->unit_price),
-                    'line_amount' => $this->formatVietnameseMoney($item->line_amount),
-                    'currency' => $this->vietnameseMoneyCurrency(),
-                ];
-            })->values(),
-            'latest_shipment' => $order->latestShipment
-                ? $order->latestShipment->toApiArray()
-                : null,
-        ]);
+        return $this->successResponse('api.order.show_success', array_merge(
+            [
+                'id' => $order->id,
+                'order_no' => $order->order_no,
+                'order_date' => $order->order_date?->toIso8601String(),
+                'order_status' => $order->statusValue(),
+                'order_label_status' => OrderStatus::orderLabelStatusForValue($order->statusValue()),
+                'order_channel' => $order->order_channel,
+                'applied_tiers' => $this->formatAppliedTiersFromOrderDiscountSnapshot($order),
+                ...$order->legacyCustomerAddressForApi(),
+                'shipping' => $order->shippingAddress,
+                'pickup' => $order->pickupAddress,
+                'has_invoice_file' => $order->invoice_file_path !== null,
+                'has_delivery_receipt_paths' => $order->delivery_receipt_paths !== null,
+                'products' => $order->items->map(function ($item) use ($productImagePathsById) {
+                    return $this->formatOrderItemForApi(
+                        $item,
+                        $productImagePathsById->get($item->product_id)
+                    );
+                })->values(),
+                'latest_shipment' => $order->latestShipment
+                    ? $order->latestShipment->toApiArray()
+                    : null,
+            ],
+            $this->formatOrderAmountsForApi($order)
+        ));
     }
 
     public function cloneTemplate(int $order): JsonResponse
@@ -462,14 +599,20 @@ class OrderController extends BaseApiController
                 ];
             }, $built['lines']);
 
-            $mergeAmounts = [
+            $mergeAmounts = array_merge([
                 'order_no' => $generatedOrderNo,
                 'order_date' => $orderDate,
                 'order_month' => $orderDate->format('Y-m'),
                 'subtotal_amount' => $subtotal,
                 'discount_amount' => $discountAmount,
                 'net_amount' => $netAmount,
-            ];
+            ], $pricing !== null
+                ? [
+                    'vat_rate_percent' => (float) $pricing['summary']['vat_rate_percent'],
+                    'vat_amount' => (float) $pricing['summary']['vat_amount'],
+                    'total_with_vat' => (float) $pricing['summary']['total_with_vat'],
+                ]
+                : OrderVatBreakdown::persistFields($subtotal, $discountAmount, null));
 
             if ($pricing !== null) {
                 $mergeAmounts['applied_discount_policy_id'] = $pricing['applied_discount_policy_id'];
@@ -517,19 +660,19 @@ class OrderController extends BaseApiController
             });
             $this->notifyDirectEmployeeAboutNewAgentOrder($order);
 
-            return $this->createdResponse('api.order.store_success', [
-                'id' => $order->id,
-                'order_no' => $order->order_no,
-                'order_status' => $order->statusValue(),
-                'order_label_status' => OrderStatus::orderLabelStatusForValue($order->statusValue()),
-                'subtotal_amount' => $this->formatVietnameseMoney($order->subtotal_amount),
-                'discount_amount' => $this->formatVietnameseMoney($order->discount_amount),
-                'net_amount' => $this->formatVietnameseMoney($order->net_amount),
-                ...$order->legacyCustomerAddressForApi(),
-                'latest_shipment' => $order->latestShipment
-                    ? $order->latestShipment->toApiArray()
-                    : null,
-            ]);
+            return $this->createdResponse('api.order.store_success', array_merge(
+                [
+                    'id' => $order->id,
+                    'order_no' => $order->order_no,
+                    'order_status' => $order->statusValue(),
+                    'order_label_status' => OrderStatus::orderLabelStatusForValue($order->statusValue()),
+                    ...$order->legacyCustomerAddressForApi(),
+                    'latest_shipment' => $order->latestShipment
+                        ? $order->latestShipment->toApiArray()
+                        : null,
+                ],
+                $this->formatOrderAmountsForApi($order->loadMissing('items'))
+            ));
         } catch (\Throwable $exception) {
             Log::error('api.order.store_failed', [
                 'user_id' => auth()->id(),
@@ -808,6 +951,28 @@ class OrderController extends BaseApiController
         ];
     }
 
+    /**
+     * @return array{
+     *     total_commission: string,
+     *     pending_commission: string,
+     *     approved_commission: string,
+     *     paid_commission: string,
+     *     entry_count: int
+     * }
+     */
+    private function formatDiscountHistorySummary(float $totalDiscount, int $entryCount): array
+    {
+        $formatted = $this->formatVietnameseMoney($totalDiscount);
+
+        return [
+            'total_commission' => $formatted,
+            'pending_commission' => $this->formatVietnameseMoney(0),
+            'approved_commission' => $this->formatVietnameseMoney(0),
+            'paid_commission' => $formatted,
+            'entry_count' => $entryCount,
+        ];
+    }
+
     private function toMoneyBcString(mixed $value): string
     {
         if ($value === null || $value === '') {
@@ -880,16 +1045,32 @@ class OrderController extends BaseApiController
         $query->where('seller_user_id', $userId);
     }
 
+    private function resolveAgentProfileIdForAgentRecord(object $agent): ?int
+    {
+        return AgentOrderScope::resolveAgentProfileId($agent);
+    }
+
     /**
      * @return array{orders: \Illuminate\Support\Collection<int, array<string, mixed>>, meta?: array{page: int, per_page: int, total: int, has_more: bool}}
      */
-    private function buildOrdersListPayload(?int $userId, ?int $limit = null, ?string $keyword = null, int $page = 1)
+    private function buildOrdersListPayload(
+        ?int $userId,
+        ?int $limit = null,
+        ?string $keyword = null,
+        int $page = 1,
+        ?int $agentProfileId = null,
+        ?int $sellerUserId = null,
+    )
     {
         $query = Order::query()
             ->with(['shippingAddress', 'items'])
             ->latest('id');
 
-        $this->applyAuthenticatedAgentOrdersScope($query, $userId);
+        if ($agentProfileId !== null || ($sellerUserId !== null && $sellerUserId > 0)) {
+            AgentOrderScope::apply($query, $agentProfileId, $sellerUserId);
+        } else {
+            $this->applyAuthenticatedAgentOrdersScope($query, $userId);
+        }
 
         $normalizedKeyword = trim((string) $keyword);
         if ($normalizedKeyword !== '') {
@@ -933,36 +1114,27 @@ class OrderController extends BaseApiController
             ->map(function (Order $order) use ($productImagePathsById) {
                 $customer = $order->legacyCustomerAddressForApi();
 
-                return [
-                    'id' => $order->id,
-                    'order_no' => $order->order_no,
-                    'order_date' => $order->order_date?->toIso8601String(),
-                    'order_status' => $order->statusValue(),
-                    'order_label_status' => OrderStatus::orderLabelStatusForValue($order->statusValue()),
-                    'order_channel' => $order->order_channel,
-                    'subtotal_amount' => $this->formatVietnameseMoney($order->subtotal_amount),
-                    'discount_amount' => $this->formatVietnameseMoney($order->discount_amount),
-                    'net_amount' => $this->formatVietnameseMoney($order->net_amount),
-                    'currency' => $this->vietnameseMoneyCurrency(),
-                    'customer' => $customer,
-                    'shipping' => $order->shippingAddress,
-                    'has_invoice_file' => $order->invoice_file_path !== null,
-                    'has_delivery_receipt_paths' => $order->delivery_receipt_paths !== null,
-                    'products' => $order->items->map(function ($item) use ($productImagePathsById) {
-                        return [
-                            'id' => $item->id,
-                            'product_id' => $item->product_id,
-                            'product_name' => $item->product_name_snapshot,
-                            'image_path' => $this->buildAbsoluteImageUrl($productImagePathsById->get($item->product_id)),
-                            'unit' => $item->unit,
-                            'quantity' => (float) $item->quantity,
-                            'quantity_in_base_unit' => (float) $item->quantity_in_base_unit,
-                            'unit_price' => $this->formatVietnameseMoney($item->unit_price),
-                            'line_amount' => $this->formatVietnameseMoney($item->line_amount),
-                            'currency' => $this->vietnameseMoneyCurrency(),
-                        ];
-                    })->values(),
-                ];
+                return array_merge(
+                    [
+                        'id' => $order->id,
+                        'order_no' => $order->order_no,
+                        'order_date' => $order->order_date?->toIso8601String(),
+                        'order_status' => $order->statusValue(),
+                        'order_label_status' => OrderStatus::orderLabelStatusForValue($order->statusValue()),
+                        'order_channel' => $order->order_channel,
+                        'customer' => $customer,
+                        'shipping' => $order->shippingAddress,
+                        'has_invoice_file' => $order->invoice_file_path !== null,
+                        'has_delivery_receipt_paths' => $order->delivery_receipt_paths !== null,
+                        'products' => $order->items->map(function ($item) use ($productImagePathsById) {
+                            return $this->formatOrderItemForApi(
+                                $item,
+                                $productImagePathsById->get($item->product_id)
+                            );
+                        })->values(),
+                    ],
+                    $this->formatOrderAmountsForApi($order)
+                );
             })
             ->values();
 
@@ -995,9 +1167,6 @@ class OrderController extends BaseApiController
             }
 
             $quantity = (float) $row['quantity'];
-            $unitPrice = (float) ($product->unit_price ?? 0);
-            $lineAmount = round($unitPrice * $quantity, 2);
-            $subtotal += $lineAmount;
 
             try {
                 $quantities = $converter->buildOrderLineQuantities($product, $quantity);
@@ -1009,13 +1178,25 @@ class OrderController extends BaseApiController
                 ];
             }
 
+            $unitPricePerBar = $this->resolveProductBaseListPrice($product);
+            if ($unitPricePerBar === null) {
+                $saleUnitPrice = $this->resolveProductUnitPrice($product, $converter);
+                $barsPerSale = $quantities['quantity'] > 0
+                    ? (float) $quantities['quantity_in_base_unit'] / (float) $quantities['quantity']
+                    : 1.0;
+                $unitPricePerBar = $barsPerSale > 0 ? round($saleUnitPrice / $barsPerSale, 2) : $saleUnitPrice;
+            }
+
+            $lineAmount = round($unitPricePerBar * (float) $quantities['quantity_in_base_unit'], 2);
+            $subtotal += $lineAmount;
+
             $lines[] = [
                 'product_id' => (int) $product->id,
                 'product_name' => (string) ($product->name ?? ''),
                 'unit' => $quantities['unit'],
                 'quantity' => $quantities['quantity'],
                 'quantity_in_base_unit' => $quantities['quantity_in_base_unit'],
-                'unit_price' => $unitPrice,
+                'unit_price' => $unitPricePerBar,
                 'line_amount' => $lineAmount,
             ];
         }
@@ -1059,16 +1240,7 @@ class OrderController extends BaseApiController
             'policy' => $pricing['policy'],
             'monthly_context' => $pricing['monthly_context'],
             'items' => collect($pricing['items'] ?? [])->map(function (array $row) {
-                return [
-                    'product_id' => $row['product_id'],
-                    'product_name' => $row['product_name'],
-                    'unit' => $row['unit'],
-                    'quantity' => $row['quantity'],
-                    'quantity_in_base_unit' => $row['quantity_in_base_unit'],
-                    'unit_price' => $this->formatVietnameseMoney($row['unit_price']),
-                    'line_amount' => $this->formatVietnameseMoney($row['line_amount']),
-                    'currency' => $this->vietnameseMoneyCurrency(),
-                ];
+                return $this->formatPricingLineForApi($row);
             })->values()->all(),
             'applied_tiers' => collect($pricing['applied_tiers'] ?? [])->map(function (array $t) {
                 return [
@@ -1086,6 +1258,10 @@ class OrderController extends BaseApiController
                 'subtotal_amount' => $this->formatVietnameseMoney($pricing['summary']['subtotal_amount']),
                 'discount_amount' => $this->formatVietnameseMoney($pricing['summary']['discount_amount']),
                 'net_amount' => $this->formatVietnameseMoney($pricing['summary']['net_amount']),
+                'vat_base' => $this->formatVietnameseMoney($pricing['summary']['net_amount']),
+                'vat_rate_percent' => (float) ($pricing['summary']['vat_rate_percent'] ?? 0),
+                'vat_amount' => $this->formatVietnameseMoney($pricing['summary']['vat_amount'] ?? 0),
+                'total_with_vat' => $this->formatVietnameseMoney($pricing['summary']['total_with_vat'] ?? $pricing['summary']['net_amount']),
                 'currency' => $this->vietnameseMoneyCurrency(),
             ],
         ];
@@ -1337,6 +1513,133 @@ class OrderController extends BaseApiController
             'name' => trim((string) ($employee->full_name ?? $directEmployeeName)) ?: $directEmployeeName,
             'email' => $email,
         ];
+    }
+
+    /**
+     * @return array{unit_price_per_bar: float, line_amount: float}
+     */
+    private function resolveOrderItemBarPricing(OrderItem $item): array
+    {
+        $converter = app(ProductUnitConverter::class);
+        $baseQty = (float) $item->quantity_in_base_unit;
+        $saleQty = (float) $item->quantity;
+        $storedUnitPrice = (float) $item->unit_price;
+        $barsPerSale = ($saleQty > 0 && $baseQty > 0) ? ($baseQty / $saleQty) : 1.0;
+
+        $unitPricePerBar = $storedUnitPrice;
+
+        if ($item->product_id) {
+            $product = DB::table('products')->where('id', $item->product_id)->first();
+            if ($product) {
+                $listBar = $converter->baseUnitListPrice($product);
+                $saleBox = $listBar !== null ? $converter->saleUnitListPrice($product, $listBar) : null;
+
+                if ($listBar !== null && abs($storedUnitPrice - $listBar) < 0.01) {
+                    $unitPricePerBar = $storedUnitPrice;
+                } elseif ($saleBox !== null && abs($storedUnitPrice - $saleBox) < 0.01 && $barsPerSale > 0) {
+                    $unitPricePerBar = round($storedUnitPrice / $barsPerSale, 2);
+                }
+            }
+        }
+
+        return [
+            'unit_price_per_bar' => $unitPricePerBar,
+            'line_amount' => round($baseQty * $unitPricePerBar, 2),
+        ];
+    }
+
+    /**
+     * @return array{
+     *     pre_tax_subtotal: float,
+     *     discount_amount: float,
+     *     discount_percent: float|null,
+     *     vat_base: float,
+     *     vat_rate_percent: float,
+     *     vat_amount: float,
+     *     total_with_vat: float
+     * }
+     */
+    private function resolveOrderPaymentBreakdown(Order $order): array
+    {
+        $order->loadMissing('items');
+
+        return OrderVatBreakdown::fromOrderWithItemPricing(
+            $order,
+            fn (OrderItem $item): array => $this->resolveOrderItemBarPricing($item)
+        );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function formatOrderAmountsForApi(Order $order): array
+    {
+        $breakdown = $this->resolveOrderPaymentBreakdown($order);
+
+        return [
+            'subtotal_amount' => $this->formatVietnameseMoney($breakdown['pre_tax_subtotal']),
+            'discount_amount' => $this->formatVietnameseMoney($breakdown['discount_amount']),
+            'net_amount' => $this->formatVietnameseMoney($breakdown['vat_base']),
+            'vat_base' => $this->formatVietnameseMoney($breakdown['vat_base']),
+            'vat_rate_percent' => $breakdown['vat_rate_percent'],
+            'vat_amount' => $this->formatVietnameseMoney($breakdown['vat_amount']),
+            'total_with_vat' => $this->formatVietnameseMoney($breakdown['total_with_vat']),
+            'currency' => $this->vietnameseMoneyCurrency(),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     * @return array<string, mixed>
+     */
+    private function formatPricingLineForApi(array $line): array
+    {
+        $saleQty = (float) ($line['quantity'] ?? 0);
+        $baseQty = (float) ($line['quantity_in_base_unit'] ?? $saleQty);
+        $barsPerSale = ($saleQty > 0 && $baseQty > 0) ? ($baseQty / $saleQty) : 1.0;
+        $barPrice = (float) ($line['unit_price'] ?? 0);
+        $boxPrice = round($barPrice * $barsPerSale, 2);
+        $lineAmount = round($saleQty * $boxPrice, 2);
+
+        return [
+            'product_id' => (int) ($line['product_id'] ?? 0),
+            'product_name' => (string) ($line['product_name'] ?? ''),
+            'unit' => (string) ($line['unit'] ?? 'box'),
+            'quantity' => $saleQty,
+            'unit_price' => $this->formatVietnameseMoney($boxPrice),
+            'line_amount' => $this->formatVietnameseMoney($lineAmount),
+            'currency' => $this->vietnameseMoneyCurrency(),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function formatOrderItemForApi(OrderItem $item, mixed $imagePath = null): array
+    {
+        $barPricing = $this->resolveOrderItemBarPricing($item);
+        $saleQty = (float) $item->quantity;
+        $baseQty = (float) $item->quantity_in_base_unit;
+        $barsPerSale = ($saleQty > 0 && $baseQty > 0) ? ($baseQty / $saleQty) : 1.0;
+        $boxPrice = round($barPricing['unit_price_per_bar'] * $barsPerSale, 2);
+        $lineAmount = round($saleQty * $boxPrice, 2);
+
+        $row = [
+            'id' => $item->id,
+            'product_id' => $item->product_id,
+            'product_name' => $item->product_name_snapshot,
+            'unit' => $item->unit,
+            'quantity' => $saleQty,
+            'unit_price' => $this->formatVietnameseMoney($boxPrice),
+            'line_amount' => $this->formatVietnameseMoney($lineAmount),
+            'currency' => $this->vietnameseMoneyCurrency(),
+        ];
+
+        if ($imagePath !== null) {
+            $row['image_path'] = $this->buildAbsoluteImageUrl(is_string($imagePath) ? $imagePath : null);
+        }
+
+        return $row;
     }
 
 }

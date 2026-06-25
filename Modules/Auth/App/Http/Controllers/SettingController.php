@@ -45,10 +45,16 @@ class SettingController extends BaseApiController
                 'updated_at',
             ])
             ->map(function ($item) {
+                $settingKey = (string) $item->setting_key;
+
                 return [
                     'id' => (int) $item->id,
-                    'key' => (string) $item->setting_key,
-                    'value' => $this->normalizeSettingValue($item->setting_value, (string) $item->value_type),
+                    'key' => $settingKey,
+                    'value' => $this->normalizeSettingValue(
+                        $item->setting_value,
+                        (string) $item->value_type,
+                        $settingKey
+                    ),
                     'value_type' => (string) $item->value_type,
                     'description' => $item->description,
                     'is_public' => (bool) $item->is_public,
@@ -65,17 +71,23 @@ class SettingController extends BaseApiController
         ]);
     }
 
-    private function normalizeSettingValue(mixed $value, string $valueType): mixed
+    private function normalizeSettingValue(mixed $value, string $valueType, string $settingKey = ''): mixed
     {
         if ($value === null) {
             return null;
         }
 
-        if ($valueType === 'string' && is_string($value)) {
-            $decoded = html_entity_decode(strip_tags($value), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $preserveHtml = $valueType === 'html' || $settingKey === 'business_info';
+
+        if (is_string($value) && in_array($valueType, ['string', 'html'], true)) {
+            $decoded = html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8');
             $normalizedSpaces = str_replace("\xc2\xa0", ' ', $decoded);
 
-            return trim($normalizedSpaces);
+            if ($preserveHtml) {
+                return trim($normalizedSpaces);
+            }
+
+            return trim(strip_tags($normalizedSpaces));
         }
 
         return $value;

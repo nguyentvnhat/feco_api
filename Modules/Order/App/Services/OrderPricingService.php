@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Modules\Order\Enums\OrderStatus;
 use Modules\Order\Support\OrderTierDiscountEngine;
+use Modules\Order\Support\OrderVatBreakdown;
 
 /**
  * Single pricing path for mobile order preview and order persistence (tier discount).
@@ -128,11 +129,11 @@ class OrderPricingService
             'items' => $this->formatLineItems($lines),
             'applied_tiers' => $this->formatAppliedTiersForApi($engineResult['breakdowns']),
             'breakdown_rows' => $this->formatBreakdownRowsForDb($engineResult['breakdowns']),
-            'summary' => [
-                'subtotal_amount' => (float) $subtotalBc,
-                'discount_amount' => (float) $engineResult['total_discount_amount'],
-                'net_amount' => (float) $engineResult['net_amount'],
-            ],
+            'summary' => $this->summaryWithVat(
+                (float) $subtotalBc,
+                (float) $engineResult['total_discount_amount'],
+                (float) $engineResult['net_amount'],
+            ),
             'applied_discount_policy_id' => (int) $policy->id,
             'monthly_qty_before' => $this->qtyDisplay($monthlyQtyBefore),
             'monthly_qty_after' => $this->qtyDisplay($monthlyQtyAfter),
@@ -462,6 +463,25 @@ class OrderPricingService
         return bcadd($qty, '0', 4);
     }
 
+    /**
+     * @return array{
+     *     subtotal_amount: float,
+     *     discount_amount: float,
+     *     net_amount: float,
+     *     vat_rate_percent: float,
+     *     vat_amount: float,
+     *     total_with_vat: float
+     * }
+     */
+    private function summaryWithVat(float $subtotal, float $discount, float $net): array
+    {
+        return array_merge([
+            'subtotal_amount' => round($subtotal, 2),
+            'discount_amount' => round($discount, 2),
+            'net_amount' => round($net, 2),
+        ], OrderVatBreakdown::persistFields($subtotal, $discount, null));
+    }
+
     private function toBc(string|float|int|null $value, string $scale): string
     {
         if ($value === null || $value === '') {
@@ -510,11 +530,7 @@ class OrderPricingService
             'items' => $this->formatLineItems($lines),
             'applied_tiers' => [],
             'breakdown_rows' => [],
-            'summary' => [
-                'subtotal_amount' => (float) $subtotalBc,
-                'discount_amount' => 0.0,
-                'net_amount' => (float) $subtotalBc,
-            ],
+            'summary' => $this->summaryWithVat((float) $subtotalBc, 0.0, (float) $subtotalBc),
             'applied_discount_policy_id' => null,
             'monthly_qty_before' => $this->qtyDisplay($monthlyQtyBefore),
             'monthly_qty_after' => $this->qtyDisplay($monthlyQtyAfter),

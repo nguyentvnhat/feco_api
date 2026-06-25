@@ -4,10 +4,12 @@ namespace Modules\Agent\App\Http\Controllers;
 
 use App\Http\Controllers\BaseApiController;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Modules\Agent\App\Http\Requests\ListChildAgentsRequest;
 use Modules\Agent\Models\Agent;
+use Modules\Agent\Support\AgentOrderScope;
+use Modules\Order\Models\Order;
+use Modules\Order\Support\OrderDisplayPricing;
 
 class ChildAgentController extends BaseApiController
 {
@@ -39,6 +41,7 @@ class ChildAgentController extends BaseApiController
                 'name',
                 'email',
                 'phone',
+                'address',
                 'city',
                 'ward',
                 'region',
@@ -53,6 +56,7 @@ class ChildAgentController extends BaseApiController
                 $summary = $this->getOrderSummaryByAgent($agent);
 
                 return array_merge($agent->toArray(), [
+                    'full_address' => $this->buildAgentFullAddress($agent),
                     'order_sold_count' => $summary['order_sold_count'],
                     'total_revenue' => $this->formatVietnameseMoney($summary['total_revenue']),
                     'latest_order_at' => $summary['latest_order_at'],
@@ -81,29 +85,11 @@ class ChildAgentController extends BaseApiController
             return ['order_sold_count' => 0, 'total_revenue' => 0, 'latest_order_at' => null];
         }
 
-        $agentProfileId = null;
-        if (Schema::hasTable('agent_profiles')) {
-            $profileQuery = DB::table('agent_profiles');
+        $agentProfileId = AgentOrderScope::resolveAgentProfileId($agent);
+        $sellerUserId = AgentOrderScope::sellerUserIdForAgent($agent);
 
-            if (Schema::hasColumn('agent_profiles', 'user_id') && $agent->user_id) {
-                $agentProfileId = $profileQuery->where('user_id', $agent->user_id)->value('id');
-            }
-
-            if (! $agentProfileId && Schema::hasColumn('agent_profiles', 'agent_code') && $agent->code) {
-                $agentProfileId = DB::table('agent_profiles')
-                    ->where('agent_code', $agent->code)
-                    ->value('id');
-            }
-        }
-
-        $ordersQuery = DB::table('orders');
-        if ($agentProfileId && Schema::hasColumn('orders', 'agent_profile_id')) {
-            $ordersQuery->where('agent_profile_id', (int) $agentProfileId);
-        } elseif (Schema::hasColumn('orders', 'seller_user_id') && $agent->user_id) {
-            $ordersQuery->where('seller_user_id', $agent->user_id);
-        } else {
-            return ['order_sold_count' => 0, 'total_revenue' => 0, 'latest_order_at' => null];
-        }
+        $ordersQuery = Order::query()->with('items');
+        AgentOrderScope::apply($ordersQuery, $agentProfileId, $sellerUserId);
 
         $latestOrderAt = null;
         if (Schema::hasColumn('orders', 'order_date')) {
@@ -112,10 +98,28 @@ class ChildAgentController extends BaseApiController
             $latestOrderAt = (clone $ordersQuery)->max('created_at');
         }
 
+        $orders = (clone $ordersQuery)->get();
+        $pricing = app(OrderDisplayPricing::class);
+        $totalRevenue = $orders->sum(fn (Order $order): float => $pricing->netAmountBeforeVat($order));
+
         return [
-            'order_sold_count' => (int) $ordersQuery->count(),
-            'total_revenue' => (float) $ordersQuery->sum('net_amount'),
+            'order_sold_count' => $orders->count(),
+            'total_revenue' => (float) $totalRevenue,
             'latest_order_at' => $latestOrderAt ? now()->parse((string) $latestOrderAt)->toIso8601String() : null,
         ];
+    }
+
+    private function buildAgentFullAddress(Agent $agent): string
+    {
+        $address = trim((string) ($agent->address ?? ''));
+        $ward = trim((string) ($agent->ward ?? ''));
+        $city = trim((string) ($agent->city ?? ''));
+
+        $parts = array_values(array_filter([$address, $ward, $city], fn (string $part) => $part !== ''));
+        if ($parts !== []) {
+            return implode(', ', $parts);
+        }
+
+        return trim((string) ($agent->region ?? ''));
     }
 }

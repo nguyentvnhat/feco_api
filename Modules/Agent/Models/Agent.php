@@ -15,6 +15,7 @@ class Agent extends Model
         'business_name',
         'email',
         'phone',
+        'address',
         'tax_code',
         'city',
         'ward',

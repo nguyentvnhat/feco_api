@@ -581,7 +581,7 @@
           "name": "Show Order",
           "request": {
             "method": "GET",
-            "description": "Trả về đơn gồm subtotal, **discount_amount** (tổng số tiền được chiết khấu, VND định dạng), **applied_tiers** (chi tiết theo nấc nếu đơn có policy tier), net_amount.",
+            "description": "Trả về đơn gồm subtotal, discount_amount, applied_tiers, net_amount (giá trước VAT), vat_base, vat_rate_percent, vat_amount, total_with_vat. Sản phẩm hiển thị theo đơn vị bán (hộp): quantity + unit_price hộp.",
             "header": [
               {
                 "key": "Accept",
@@ -629,9 +629,17 @@
                   "    pm.expect(res.data.applied_tiers).to.be.an('array');",
                   "});",
                   "",
-                  "pm.test('Products include image_path field', function () {",
+                  "pm.test('Response has VAT breakdown fields', function () {",
+                  "    pm.expect(res.data).to.have.property('vat_base');",
+                  "    pm.expect(res.data).to.have.property('vat_rate_percent');",
+                  "    pm.expect(res.data).to.have.property('vat_amount');",
+                  "    pm.expect(res.data).to.have.property('total_with_vat');",
+                  "});",
+                  "",
+                  "pm.test('Products use sale unit (box) pricing only', function () {",
                   "    if (Array.isArray(res.data.products) && res.data.products.length > 0) {",
                   "        pm.expect(res.data.products[0]).to.have.property('image_path');",
+                  "        pm.expect(res.data.products[0]).to.not.have.property('quantity_in_base_unit');",
                   "    }",
                   "});"
                 ]
@@ -828,6 +836,10 @@
                   "pm.test('Store order calculates monetary totals', function () {",
                   "    pm.expect(res.data).to.have.property('subtotal_amount');",
                   "    pm.expect(res.data).to.have.property('net_amount');",
+                  "    pm.expect(res.data).to.have.property('vat_base');",
+                  "    pm.expect(res.data).to.have.property('vat_rate_percent');",
+                  "    pm.expect(res.data).to.have.property('vat_amount');",
+                  "    pm.expect(res.data).to.have.property('total_with_vat');",
                   "});",
                   "",
                   "if (res && res.data && res.data.id) {",
