@@ -5,8 +5,8 @@ namespace Modules\Order\Support;
 /**
  * Tier discount theo **số lượng** (min_value / max_value trên commission_policy_tiers).
  *
- * Progressive: chia số lượng đơn hiện tại theo nấc (có thể gồm nhiều dòng sản phẩm); mỗi nấc
- * discount = (tổng đơn giá×số lượng thuộc nấc đó) × reward_percent / 100.
+ * Progressive: lần lượt lấp đầy headroom từng bậc từ số lượng đơn hiện tại (vd. 95 sp @25% + 5 sp @30%);
+ * discount mỗi bậc = (tiền hàng thuộc phần SL đó) × reward_percent / 100, **cộng dồn**.
  *
  * Flat: chọn một nấc theo vị trí kết thúc cộng dồn; discount = subtotal × reward_percent / 100.
  */
@@ -53,8 +53,14 @@ final class OrderTierDiscountEngine
 
         $breakdowns = [];
         $totalDiscountSum = '0';
+        $orderQtyRemaining = self::toBc($currentOrderQty, '4');
+        $orderUnitCursor = '1';
 
         foreach ($tiers as $tier) {
+            if (bccomp($orderQtyRemaining, '0', 4) <= 0) {
+                break;
+            }
+
             $tierMin = self::toBc($tier['min_value'] ?? '0', '4');
             $tierMax = isset($tier['max_value']) && $tier['max_value'] !== null && $tier['max_value'] !== ''
                 ? self::toBc((string) $tier['max_value'], '4')
@@ -65,22 +71,23 @@ final class OrderTierDiscountEngine
                 continue;
             }
 
-            $overlapStart = self::bcMax($sliceStart, $tierMin, 4);
-            $overlapEnd = self::bcMin($sliceEnd, $tierMax, 4);
-
-            if (bccomp($overlapStart, $overlapEnd, 4) > 0) {
+            if (bccomp($monthlyQtyBefore, $tierMax, 4) >= 0) {
                 continue;
             }
 
-            $appliedQty = self::bcAdd(self::bcSub($overlapEnd, $overlapStart, 4), '1', 4);
-
-            $kStart = self::bcSub($overlapStart, $monthlyQtyBefore, 4);
-            $kEnd = self::bcSub($overlapEnd, $monthlyQtyBefore, 4);
-            $kStart = self::bcMax($kStart, '1', 4);
-            $kEnd = self::bcMin($kEnd, $currentOrderQty, 4);
-            if (bccomp($kStart, $kEnd, 4) > 0) {
+            $tierFloor = self::bcSub($tierMin, '1', 4);
+            $headroom = self::bcSub($tierMax, self::bcMax($monthlyQtyBefore, $tierFloor, 4), 4);
+            if (bccomp($headroom, '0', 4) <= 0) {
                 continue;
             }
+
+            $appliedQty = self::bcMin($orderQtyRemaining, $headroom, 4);
+            if (bccomp($appliedQty, '0', 4) <= 0) {
+                continue;
+            }
+
+            $kStart = $orderUnitCursor;
+            $kEnd = self::bcAdd(self::bcSub($orderUnitCursor, '1', 4), $appliedQty, 4);
 
             $tierBasisRaw = self::basisMoneyForOrderUnitInterval($lines, $kStart, $kEnd);
             $pct = self::toBc((string) $rewardPercent, '4');
@@ -93,6 +100,9 @@ final class OrderTierDiscountEngine
             $tierBasisRounded = self::moneyFormat2($tierBasisRaw);
             $discountLineRounded = self::moneyFormat2($discountLine);
             $totalDiscountSum = bcadd($totalDiscountSum, $discountLineRounded, 2);
+
+            $overlapStart = self::bcAdd($monthlyQtyBefore, $kStart, 4);
+            $overlapEnd = self::bcAdd($monthlyQtyBefore, $kEnd, 4);
 
             $breakdowns[] = [
                 'commission_policy_id' => $commissionPolicyId,
@@ -113,9 +123,12 @@ final class OrderTierDiscountEngine
                         ? self::qtyFormat4($tierMax)
                         : null,
                     'calculation_method' => 'progressive',
-                    'basis_rule' => 'line_amount_proportional_to_base_units_in_tier',
+                    'basis_rule' => 'sequential_tier_headroom_fill',
                 ],
             ];
+
+            $orderQtyRemaining = self::bcSub($orderQtyRemaining, $appliedQty, 4);
+            $orderUnitCursor = self::bcAdd($orderUnitCursor, $appliedQty, 4);
         }
 
         $totalDiscountRounded = self::moneyFormat2($totalDiscountSum);

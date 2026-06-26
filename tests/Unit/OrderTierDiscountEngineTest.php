@@ -76,6 +76,62 @@ class OrderTierDiscountEngineTest extends TestCase
         $this->assertSame('10.0000', $result['breakdowns'][2]['applied_qty']);
     }
 
+    public function test_progressive_strategic_policy_100_units_splits_95_and_5(): void
+    {
+        $policyId = 1101;
+        $tiers = [
+            ['id' => 11001, 'min_value' => '0', 'max_value' => '95', 'reward_percent' => '25'],
+            ['id' => 11002, 'min_value' => '100', 'max_value' => '145', 'reward_percent' => '30'],
+        ];
+        $lines = $this->singleLine('100', '100000');
+        $subtotal = '10000000.00';
+
+        $result = OrderTierDiscountEngine::computeProgressivePercentFromLines(
+            $policyId,
+            '0',
+            '100',
+            $subtotal,
+            $tiers,
+            '100',
+            $lines,
+        );
+
+        $this->assertCount(2, $result['breakdowns']);
+        $this->assertSame('95.0000', $result['breakdowns'][0]['applied_qty']);
+        $this->assertSame('25.00', $result['breakdowns'][0]['reward_percent']);
+        $this->assertSame('5.0000', $result['breakdowns'][1]['applied_qty']);
+        $this->assertSame('30.00', $result['breakdowns'][1]['reward_percent']);
+        $this->assertSame('2500000.00', $result['breakdowns'][0]['discount_amount']);
+        $this->assertSame('150000.00', $result['breakdowns'][1]['discount_amount']);
+        $this->assertSame('2650000.00', $result['total_discount_amount']);
+    }
+
+    public function test_progressive_strategic_after_95_applies_next_tier_to_full_order_qty(): void
+    {
+        $policyId = 1101;
+        $tiers = [
+            ['id' => 11001, 'min_value' => '0', 'max_value' => '95', 'reward_percent' => '25'],
+            ['id' => 11002, 'min_value' => '100', 'max_value' => '145', 'reward_percent' => '30'],
+        ];
+        $lines = $this->singleLine('10', '3850000');
+        $subtotal = '38500000.00';
+
+        $result = OrderTierDiscountEngine::computeProgressivePercentFromLines(
+            $policyId,
+            '95',
+            '10',
+            $subtotal,
+            $tiers,
+            '105',
+            $lines,
+        );
+
+        $this->assertCount(1, $result['breakdowns']);
+        $this->assertSame('10.0000', $result['breakdowns'][0]['applied_qty']);
+        $this->assertSame('30.00', $result['breakdowns'][0]['reward_percent']);
+        $this->assertSame('11550000.00', $result['total_discount_amount']);
+    }
+
     public function test_flat_applies_end_tier_percent_to_full_subtotal(): void
     {
         $policyId = 3;
