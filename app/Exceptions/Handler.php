@@ -6,6 +6,8 @@ use Illuminate\Auth\AuthenticationException;
 use Illuminate\Foundation\Exceptions\Handler as ExceptionHandler;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Throwable;
@@ -35,12 +37,26 @@ class Handler extends ExceptionHandler
 
     public function render($request, Throwable $e)
     {
-        if ($this->isApiPath($request) && $e instanceof AuthenticationException) {
-            return $this->apiUnauthenticatedJsonResponse();
-        }
+        if ($this->isApiPath($request)) {
+            if ($e instanceof AuthenticationException) {
+                return $this->apiUnauthenticatedJsonResponse();
+            }
 
-        if ($this->isApiPath($request) && ($e instanceof MethodNotAllowedHttpException || $e instanceof NotFoundHttpException)) {
-            return $this->apiNotFoundJsonResponse();
+            if ($e instanceof MethodNotAllowedHttpException || $e instanceof NotFoundHttpException) {
+                return $this->apiNotFoundJsonResponse();
+            }
+
+            if ($e instanceof ValidationException) {
+                return parent::render($request, $e);
+            }
+
+            if ($e instanceof HttpExceptionInterface && $e->getStatusCode() < 500) {
+                return parent::render($request, $e);
+            }
+
+            report($e);
+
+            return $this->apiUnexpectedErrorJsonResponse();
         }
 
         return parent::render($request, $e);
@@ -67,5 +83,14 @@ class Handler extends ExceptionHandler
             'message' => __('api.auth.invalid_credentials'),
             'data' => (object) [],
         ], 401);
+    }
+
+    private function apiUnexpectedErrorJsonResponse(): JsonResponse
+    {
+        return response()->json([
+            'success' => false,
+            'message' => __('api.errors.unexpected'),
+            'data' => (object) [],
+        ], 500);
     }
 }

@@ -4,6 +4,7 @@ return [
     'errors' => [
         'not_found' => 'Không tìm thấy.',
         'validation_error' => 'Dữ liệu không hợp lệ.',
+        'unexpected' => 'Đã có lỗi xảy ra',
     ],
     'auth' => [
         'invalid_credentials' => 'Thông tin đăng nhập không đúng.',
