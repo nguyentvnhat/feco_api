@@ -500,16 +500,26 @@ class OrderController extends BaseApiController
             ]);
         }
 
-        $orderDate = now();
-        $pricing = $this->orderPricingService->buildPricingPayload(
-            $agentProfileId,
-            $orderDate->toDateString(),
-            $orderDate->format('Y-m'),
-            $built['lines'],
-            null,
-        );
+        try {
+            $orderDate = now();
+            $pricing = $this->orderPricingService->buildPricingPayload(
+                $agentProfileId,
+                $orderDate->toDateString(),
+                $orderDate->format('Y-m'),
+                $built['lines'],
+                null,
+            );
 
-        return $this->successResponse('api.order.preview_success', $this->formatOrderPricingApiData($pricing));
+            return $this->successResponse('api.order.preview_success', $this->formatOrderPricingApiData($pricing));
+        } catch (\Throwable $e) {
+            Log::error('api.order.preview_failed', [
+                'user_id' => $user->id,
+                'agent_profile_id' => $agentProfileId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return $this->errorResponse('api.errors.unexpected', 500, (object) []);
+        }
     }
 
     /**
@@ -676,13 +686,10 @@ class OrderController extends BaseApiController
         } catch (\Throwable $exception) {
             Log::error('api.order.store_failed', [
                 'user_id' => auth()->id(),
-                'payload' => $validated,
-                'exception_message' => $exception->getMessage(),
-                'exception_class' => $exception::class,
-                'trace' => $exception->getTraceAsString(),
+                'error' => $exception->getMessage(),
             ]);
 
-            return $this->errorResponse('api.order.store_failed', 500, (object) []);
+            return $this->errorResponse('api.errors.unexpected', 500, (object) []);
         }
     }
 
