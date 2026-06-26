@@ -774,20 +774,31 @@ class OrderController extends BaseApiController
             ]);
         }
 
-        DB::transaction(function () use ($targetOrder, $currentStatus): void {
-            $targetOrder->update(['order_status' => OrderStatus::CANCELLED->value]);
+        try {
+            DB::transaction(function () use ($targetOrder, $currentStatus): void {
+                $targetOrder->update(['order_status' => OrderStatus::CANCELLED->value]);
 
-            if (Schema::hasTable('order_status_histories')) {
-                $targetOrder->statusHistories()->create([
-                    'from_status' => $currentStatus,
-                    'to_status' => OrderStatus::CANCELLED->value,
-                    'source_type' => 'api',
-                    'source_ref_id' => null,
-                    'changed_by_user_id' => auth()->id(),
-                    'note' => 'Agent cancelled order from mobile app.',
-                ]);
-            }
-        });
+                if (Schema::hasTable('order_status_histories')) {
+                    $targetOrder->statusHistories()->create([
+                        'from_status' => $currentStatus,
+                        'to_status' => OrderStatus::CANCELLED->value,
+                        'source_type' => 'manual',
+                        'source_ref_id' => null,
+                        'changed_by_user_id' => auth()->id(),
+                        'note' => 'Agent cancelled order from mobile app.',
+                    ]);
+                }
+            });
+        } catch (\Throwable $e) {
+            Log::error('api.order.cancel_failed', [
+                'order_id' => $targetOrder->id,
+                'order_no' => $targetOrder->order_no,
+                'user_id' => auth()->id(),
+                'error' => $e->getMessage(),
+            ]);
+
+            return $this->errorResponse('api.errors.unexpected', 500, (object) []);
+        }
         $targetOrder->refresh();
         $this->notifyDirectEmployeeAboutCancelledAgentOrder($targetOrder);
 

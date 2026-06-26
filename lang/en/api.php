@@ -4,6 +4,7 @@ return [
     'errors' => [
         'not_found' => 'Not found.',
         'validation_error' => 'Validation failed.',
+        'unexpected' => 'An error occurred',
     ],
     'auth' => [
         'invalid_credentials' => 'Invalid login credentials.',
