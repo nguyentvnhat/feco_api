@@ -17,12 +17,15 @@ use Modules\Order\App\Mail\AgentOrderCreatedDirectEmployeeMail;
 use Modules\Order\App\Http\Requests\PreviewOrderRequest;
 use Modules\Order\App\Http\Requests\StoreOrderRequest;
 use Modules\Order\App\Http\Requests\UpdateOrderRequest;
+use Modules\Order\App\Services\AgentMonthlyBonusService;
 use Modules\Order\App\Services\OrderPricingService;
 use Modules\Order\App\Services\ProductUnitConverter;
 use Modules\Order\Enums\OrderStatus;
 use Modules\Order\Models\Order;
 use Modules\Order\Models\OrderAddress;
 use Modules\Order\Models\OrderItem;
+use Modules\Order\Support\AgentSelfPurchaseDiscount;
+use Modules\Order\Support\OrderAuditLogger;
 use Modules\Order\Support\OrderDisplayPricing;
 use Modules\Order\Support\OrderVatBreakdown;
 
@@ -36,6 +39,7 @@ class OrderController extends BaseApiController
 {
     public function __construct(
         private readonly OrderPricingService $orderPricingService,
+        private readonly AgentMonthlyBonusService $agentMonthlyBonusService,
     ) {
     }
 
@@ -508,6 +512,7 @@ class OrderController extends BaseApiController
                 $orderDate->format('Y-m'),
                 $built['lines'],
                 null,
+                AgentSelfPurchaseDiscount::CHANNEL_AGENT_ORDER,
             );
 
             return $this->successResponse('api.order.preview_success', $this->formatOrderPricingApiData($pricing));
@@ -577,13 +582,15 @@ class OrderController extends BaseApiController
             }
 
             $pricing = null;
-            if (($validated['order_channel'] ?? '') === 'agent_order' && $resolvedAgentProfileId > 0) {
+            $orderChannel = (string) ($validated['order_channel'] ?? '');
+            if (AgentSelfPurchaseDiscount::qualifies($orderChannel, $resolvedAgentProfileId > 0 ? $resolvedAgentProfileId : null)) {
                 $pricing = $this->orderPricingService->buildPricingPayload(
                     $resolvedAgentProfileId,
                     $orderDate->toDateString(),
                     $orderDate->format('Y-m'),
                     $built['lines'],
                     null,
+                    $orderChannel,
                 );
             }
 
@@ -613,6 +620,7 @@ class OrderController extends BaseApiController
                 'order_no' => $generatedOrderNo,
                 'order_date' => $orderDate,
                 'order_month' => $orderDate->format('Y-m'),
+                'created_source' => 'api',
                 'subtotal_amount' => $subtotal,
                 'discount_amount' => $discountAmount,
                 'net_amount' => $netAmount,
@@ -666,9 +674,10 @@ class OrderController extends BaseApiController
                     $this->orderPricingService->persistDiscountBreakdowns($order->id, $pricing['breakdown_rows']);
                 }
 
-                return $order->fresh(['shippingAddress', 'latestShipment']);
+                return $order->fresh(['shippingAddress', 'latestShipment', 'items']);
             });
             $this->notifyDirectEmployeeAboutNewAgentOrder($order);
+            $this->agentMonthlyBonusService->syncForOrder($order->fresh(['items']));
 
             return $this->createdResponse('api.order.store_success', array_merge(
                 [
@@ -782,6 +791,8 @@ class OrderController extends BaseApiController
         }
 
         try {
+            $beforeSnapshot = OrderAuditLogger::snapshot($targetOrder);
+
             DB::transaction(function () use ($targetOrder, $currentStatus): void {
                 $targetOrder->update(['order_status' => OrderStatus::CANCELLED->value]);
 
@@ -796,6 +807,15 @@ class OrderController extends BaseApiController
                     ]);
                 }
             });
+
+            $targetOrder->refresh();
+            OrderAuditLogger::log(
+                'order.updated',
+                $targetOrder,
+                $beforeSnapshot,
+                OrderAuditLogger::snapshot($targetOrder->fresh(['items'])),
+                request(),
+            );
         } catch (\Throwable $e) {
             Log::error('api.order.cancel_failed', [
                 'order_id' => $targetOrder->id,
@@ -807,6 +827,7 @@ class OrderController extends BaseApiController
             return $this->errorResponse('api.errors.unexpected', 500, (object) []);
         }
         $targetOrder->refresh();
+        $this->agentMonthlyBonusService->syncForOrder($targetOrder->fresh(['items']));
         $this->notifyDirectEmployeeAboutCancelledAgentOrder($targetOrder);
 
         return $this->successResponse('api.order.cancel_success', (object) []);

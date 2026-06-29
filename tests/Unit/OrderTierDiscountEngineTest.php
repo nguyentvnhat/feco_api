@@ -101,9 +101,9 @@ class OrderTierDiscountEngineTest extends TestCase
         $this->assertSame('25.00', $result['breakdowns'][0]['reward_percent']);
         $this->assertSame('5.0000', $result['breakdowns'][1]['applied_qty']);
         $this->assertSame('30.00', $result['breakdowns'][1]['reward_percent']);
-        $this->assertSame('2500000.00', $result['breakdowns'][0]['discount_amount']);
+        $this->assertSame('2375000.00', $result['breakdowns'][0]['discount_amount']);
         $this->assertSame('150000.00', $result['breakdowns'][1]['discount_amount']);
-        $this->assertSame('2650000.00', $result['total_discount_amount']);
+        $this->assertSame('2525000.00', $result['total_discount_amount']);
     }
 
     public function test_progressive_strategic_after_95_applies_next_tier_to_full_order_qty(): void

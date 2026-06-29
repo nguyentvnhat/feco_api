@@ -57,12 +57,32 @@ enum OrderStatus: string
     }
 
     /**
+     * Đơn đã xác nhận bán — dùng khi ghi bonus / commission theo đơn.
+     *
      * @return list<string>
      */
     public static function soldLikeValues(): array
     {
         return [
             self::READY_TO_SHIP->value,
+        ];
+    }
+
+    /**
+     * Đơn được tính vào sản lượng tích lũy tháng (chiết khấu tier / thưởng mốc).
+     *
+     * @return list<string>
+     */
+    public static function monthlyQuantityAccumulationValues(): array
+    {
+        return [
+            self::READY_TO_SHIP->value,
+            self::SHIPPED->value,
+            self::TPL_CONFIRMED->value,
+            self::TPL_TRANSIT->value,
+            self::DELIVERING->value,
+            self::DELIVERED->value,
+            self::DELAY->value,
         ];
     }
 
