@@ -15,6 +15,7 @@ class Order extends Model
         'order_no',
         'order_date',
         'order_month',
+        'created_source',
         'seller_user_id',
         'agent_profile_id',
         'customer_name',

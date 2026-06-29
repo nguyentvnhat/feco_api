@@ -5,6 +5,7 @@ namespace Modules\Order\App\Services;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Modules\Order\Enums\OrderStatus;
+use Modules\Order\Support\AgentSelfPurchaseDiscount;
 use Modules\Order\Support\OrderTierDiscountEngine;
 use Modules\Order\Support\OrderVatBreakdown;
 
@@ -33,13 +34,15 @@ class OrderPricingService
         string $orderMonthYm,
         array $lines,
         ?int $excludeOrderId = null,
+        ?string $orderChannel = AgentSelfPurchaseDiscount::CHANNEL_AGENT_ORDER,
     ): array {
         $subtotal = $this->sumLineSubtotal($lines);
         $subtotalBc = $this->toBc((string) $subtotal, '2');
 
         $currentOrderQty = $this->sumLineQuantityBase($lines);
 
-        $policy = $this->resolveActiveDiscountPolicyRow($agentProfileId, $orderDateYmd);
+        $applyDiscount = AgentSelfPurchaseDiscount::qualifies($orderChannel, $agentProfileId);
+        $policy = $applyDiscount ? $this->resolveActiveDiscountPolicyRow($agentProfileId, $orderDateYmd) : null;
         $eligibleStatuses = OrderStatus::soldLikeValues();
 
         $isMonthly = false;
@@ -191,8 +194,12 @@ class OrderPricingService
             ->where('o.order_month', $orderMonthYm)
             ->whereIn('o.order_status', $eligibleStatuses);
 
+        if (Schema::hasColumn('orders', 'order_channel')) {
+            $q->where('o.order_channel', AgentSelfPurchaseDiscount::CHANNEL_AGENT_ORDER);
+        }
+
         if ($excludeOrderId !== null) {
-            $q->where('o.id', '<>', $excludeOrderId);
+            $q->where('o.id', '<', $excludeOrderId);
         }
 
         $sum = $q->sum('oi.quantity_in_base_unit');
@@ -444,7 +451,17 @@ class OrderPricingService
      */
     private function eligibleOrderStatuses(array $conditions): array
     {
-        return [OrderStatus::READY_TO_SHIP->value];
+        $defaults = OrderStatus::monthlyQuantityAccumulationValues();
+        $statuses = $conditions['eligible_order_statuses'] ?? null;
+        if (! is_array($statuses) || $statuses === []) {
+            return $defaults;
+        }
+
+        $normalized = array_values(array_filter(array_map(static fn ($s) => is_string($s) ? $s : null, $statuses)));
+        $allowed = array_flip($defaults);
+        $filtered = array_values(array_filter($normalized, static fn (string $s) => isset($allowed[$s])));
+
+        return $filtered !== [] ? $filtered : $defaults;
     }
 
     private function isMonthlyPolicy(object $policy): bool
