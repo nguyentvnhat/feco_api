@@ -126,6 +126,11 @@ class AuthController extends BaseApiController
             ? $this->getMonthlyCommissionForSeller($user->id, (string) ($agent->code ?? ''))
             : 0.0;
 
+        $resolvedProvinceCode = $agent ? $this->resolveAgentProvinceCode($agent, (int) $user->id) : null;
+        $resolvedWardCode = $agent && $resolvedProvinceCode
+            ? $this->resolveAgentWardCode($resolvedProvinceCode, (string) ($agent->ward ?? ''))
+            : null;
+
         return $this->successResponse('api.auth.login_success', [
             'user' => [
                 'id' => $user->id,
@@ -140,6 +145,11 @@ class AuthController extends BaseApiController
                 'business_name' => $agent->business_name,
                 'logo_path' => $this->buildAbsoluteAssetUrl($agent->logo_path ?? null),
                 'full_address' => $this->buildAgentFullAddress($agent),
+                'address' => trim((string) ($agent->address ?? '')) ?: null,
+                'city' => trim((string) ($agent->city ?? '')) ?: null,
+                'ward' => trim((string) ($agent->ward ?? '')) ?: null,
+                'province_code' => $resolvedProvinceCode,
+                'ward_code' => $resolvedWardCode,
                 'status' => $agent->status,
                 'agent_type' => [
                     'id' => $agent->agent_type_id,
@@ -432,6 +442,73 @@ class AuthController extends BaseApiController
         }
 
         return trim((string) ($agent->full_address ?? ''));
+    }
+
+    private function resolveAgentProvinceCode(object $agent, int $userId): ?string
+    {
+        if (! Schema::hasTable('provinces')) {
+            return null;
+        }
+
+        if (Schema::hasTable('agent_profiles') && Schema::hasColumn('agent_profiles', 'province_code')) {
+            $fromProfile = DB::table('agent_profiles')->where('user_id', $userId)->value('province_code');
+            if ($fromProfile && DB::table('provinces')->where('code', (string) $fromProfile)->exists()) {
+                return (string) $fromProfile;
+            }
+        }
+
+        $city = trim((string) ($agent->city ?? ''));
+        if ($city === '') {
+            return null;
+        }
+
+        $province = DB::table('provinces')->where('name', $city)->first();
+        if ($province) {
+            return (string) $province->code;
+        }
+
+        $shortCity = preg_replace('/^(Thành phố|Tỉnh)\s+/iu', '', $city) ?? $city;
+        $province = DB::table('provinces')
+            ->where(function ($query) use ($city, $shortCity): void {
+                $query->where('name', 'like', '%'.$city.'%');
+                if ($shortCity !== '' && $shortCity !== $city) {
+                    $query->orWhere('name', 'like', '%'.$shortCity.'%');
+                }
+            })
+            ->orderByRaw('LENGTH(name) ASC')
+            ->first();
+
+        return $province ? (string) $province->code : null;
+    }
+
+    private function resolveAgentWardCode(string $provinceCode, string $wardName): ?string
+    {
+        $wardName = trim($wardName);
+        if ($wardName === '' || ! Schema::hasTable('wards')) {
+            return null;
+        }
+
+        $ward = DB::table('wards')
+            ->where('province_code', $provinceCode)
+            ->where('name', $wardName)
+            ->first();
+        if ($ward) {
+            return (string) $ward->code;
+        }
+
+        $shortName = preg_replace('/^(Phường|Xã|Thị trấn)\s+/iu', '', $wardName) ?? $wardName;
+        $ward = DB::table('wards')
+            ->where('province_code', $provinceCode)
+            ->where(function ($query) use ($wardName, $shortName): void {
+                $query->where('name', 'like', '%'.$wardName.'%');
+                if ($shortName !== '' && $shortName !== $wardName) {
+                    $query->orWhere('name', 'like', '%'.$shortName.'%');
+                }
+            })
+            ->orderByRaw('LENGTH(name) ASC')
+            ->first();
+
+        return $ward ? (string) $ward->code : null;
     }
 
     private function buildAbsoluteAssetUrl(?string $path): ?string
