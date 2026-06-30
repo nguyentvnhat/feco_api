@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Schema;
 use Modules\Order\Enums\OrderStatus;
 use Modules\Order\Models\Order;
 use Modules\Order\Support\AgentHierarchyRollup;
+use Modules\Order\Support\OrderCommissionEligibility;
 
 /**
  * Thưởng vượt mốc (policy_type = bonus): % trên doanh thu trước thuế (net_amount) của từng đơn,
@@ -26,9 +27,13 @@ class AgentMonthlyBonusService
 
         $order->loadMissing('items');
 
-        if (! in_array((string) $order->statusValue(), OrderStatus::soldLikeValues(), true)) {
+        if (OrderCommissionEligibility::shouldReverseCommission($order)) {
             $this->deleteBonusEntriesForOrder((int) $order->id);
 
+            return;
+        }
+
+        if (! OrderCommissionEligibility::shouldCommitCommission($order)) {
             return;
         }
 

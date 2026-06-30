@@ -27,6 +27,7 @@ return [
         'store_success' => 'Order created successfully.',
         'store_failed' => 'An error occurred while creating the order. Please try again.',
         'update_success' => 'Order updated successfully.',
+        'shipping_requires_ready_to_ship' => 'The order must reach Ready to ship before moving to shipping statuses.',
         'destroy_success' => 'Order deleted successfully.',
         'cancel_success' => 'Order cancelled successfully.',
         'cancel_already_done' => 'This order is already cancelled/returned.',

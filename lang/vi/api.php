@@ -27,6 +27,7 @@ return [
         'store_success' => 'Tạo đơn hàng thành công.',
         'store_failed' => 'Có lỗi xảy ra khi tạo đơn hàng. Vui lòng thử lại.',
         'update_success' => 'Cập nhật đơn hàng thành công.',
+        'shipping_requires_ready_to_ship' => 'Đơn phải qua trạng thái Sẵn sàng giao trước khi chuyển sang vận chuyển.',
         'destroy_success' => 'Xóa đơn hàng thành công.',
         'cancel_success' => 'Huỷ đơn hàng thành công.',
         'cancel_already_done' => 'Đơn hàng này đã ở trạng thái huỷ/hoàn.',

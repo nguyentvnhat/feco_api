@@ -26,6 +26,7 @@ use Modules\Order\Models\OrderAddress;
 use Modules\Order\Models\OrderItem;
 use Modules\Order\Support\AgentSelfPurchaseDiscount;
 use Modules\Order\Support\OrderAuditLogger;
+use Modules\Order\Support\OrderCommissionEligibility;
 use Modules\Order\Support\OrderDisplayPricing;
 use Modules\Order\Support\OrderVatBreakdown;
 
@@ -705,6 +706,10 @@ class OrderController extends BaseApiController
     public function update(UpdateOrderRequest $request, Order $order): JsonResponse
     {
         $validated = $request->validated();
+        $previousStatus = (string) $order->statusValue();
+        $newStatus = (string) ($validated['order_status'] ?? $previousStatus);
+
+        OrderCommissionEligibility::assertTransitionAllowed($order, $newStatus);
 
         $orderDate = now()->parse($validated['order_date']);
         $addressAttrs = $this->shippingAddressAttributesFromRequest($validated);
@@ -733,7 +738,11 @@ class OrderController extends BaseApiController
             $order->syncLegacyCustomerColumnsFromShippingAddress();
         });
 
-        $order->refresh()->load(['shippingAddress', 'latestShipment']);
+        $order->refresh()->load(['shippingAddress', 'latestShipment', 'items']);
+
+        if ($previousStatus !== $newStatus) {
+            $this->agentMonthlyBonusService->syncForOrder($order->fresh(['items']));
+        }
 
         return $this->successResponse('api.order.update_success', [
             'id' => $order->id,
