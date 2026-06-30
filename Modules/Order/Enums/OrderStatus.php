@@ -87,6 +87,39 @@ enum OrderStatus: string
     }
 
     /**
+     * Hoàn / hủy — gỡ commission_entries đã chốt từ ready_to_ship.
+     *
+     * @return list<string>
+     */
+    public static function commissionReversalValues(): array
+    {
+        return [
+            self::CANCELLED->value,
+            self::ON_RETURN->value,
+            self::RETURN_RECEIVED->value,
+            self::PARTIAL_RETURNED->value,
+            self::RETURNED->value,
+        ];
+    }
+
+    /**
+     * Nhóm vận chuyển + hoàn tất — bắt buộc đã qua {@see self::READY_TO_SHIP}.
+     *
+     * @return list<string>
+     */
+    public static function shippingProgressionValues(): array
+    {
+        return [
+            self::SHIPPED->value,
+            self::TPL_CONFIRMED->value,
+            self::TPL_TRANSIT->value,
+            self::DELIVERING->value,
+            self::DELIVERED->value,
+            self::DELAY->value,
+        ];
+    }
+
+    /**
      * Nhãn tiếng Việt cho API (luôn đọc từ locale `vi`, giống admin: __('order.status.{value})').
      */
     public function orderLabelStatus(): string
