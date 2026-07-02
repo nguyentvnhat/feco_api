@@ -577,6 +577,7 @@
                   "});",
                   "",
                   "pm.test('Contains products/provinces/wards', function () {",
+                  "    pm.expect(res.data).to.have.property('agent_profile_id');",
                   "    pm.expect(res.data).to.have.property('products');",
                   "    pm.expect(res.data).to.have.property('provinces');",
                   "    pm.expect(res.data).to.have.property('wards');",

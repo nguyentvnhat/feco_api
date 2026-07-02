@@ -340,6 +340,9 @@ class OrderController extends BaseApiController
         $agentId = $userId
             ? DB::table('agents')->where('user_id', $userId)->value('id')
             : null;
+        $agentProfileId = $userId
+            ? (int) (DB::table('agent_profiles')->where('user_id', $userId)->value('id') ?? 0)
+            : 0;
 
         $products = collect();
         if ($agentId) {
@@ -373,6 +376,7 @@ class OrderController extends BaseApiController
             ->get(['province_code', 'code', 'label', 'name']);
 
         return $this->successResponse('api.order.create_success', [
+            'agent_profile_id' => $agentProfileId > 0 ? $agentProfileId : null,
             'products' => $products,
             'provinces' => $provinces,
             'wards' => $wards,

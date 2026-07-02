@@ -130,6 +130,9 @@ class AuthController extends BaseApiController
         $resolvedWardCode = $agent && $resolvedProvinceCode
             ? $this->resolveAgentWardCode($resolvedProvinceCode, (string) ($agent->ward ?? ''))
             : null;
+        $agentProfileId = Schema::hasTable('agent_profiles')
+            ? (int) (DB::table('agent_profiles')->where('user_id', $user->id)->value('id') ?? 0)
+            : 0;
 
         return $this->successResponse('api.auth.login_success', [
             'user' => [
@@ -140,6 +143,7 @@ class AuthController extends BaseApiController
             ],
             'agent' => $agent ? [
                 'id' => $agent->id,
+                'agent_profile_id' => $agentProfileId > 0 ? $agentProfileId : null,
                 'code' => $agent->code,
                 'contract_code' => trim((string) ($agent->contract_code ?? '')) ?: null,
                 'contract_file_url' => $this->buildAbsoluteAssetUrl($agent->contract_file_path ?? null),
