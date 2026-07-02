@@ -14,6 +14,7 @@ return [
         'account_not_activated' => 'Tài khoản chưa được kích hoạt, vui lòng liên hệ quản trị viên.',
         'account_locked' => 'Tài khoản đã bị khóa. Vui lòng liên hệ quản trị viên để mở lại.',
         'agent_policy_not_configured' => 'Chưa được thiết lập chính sách hoa hồng, vui lòng liên hệ quản trị viên.',
+        'mobile_welcome_acknowledged' => 'Đã xác nhận thông tin chào mừng.',
     ],
     'order' => [
         'index_success' => 'Lấy danh sách đơn hàng theo người dùng thành công.',
