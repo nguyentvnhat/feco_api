@@ -141,6 +141,7 @@ class AuthController extends BaseApiController
             'agent' => $agent ? [
                 'id' => $agent->id,
                 'code' => $agent->code,
+                'contract_code' => trim((string) ($agent->contract_code ?? '')) ?: null,
                 'name' => $agent->name,
                 'business_name' => $agent->business_name,
                 'logo_path' => $this->buildAbsoluteAssetUrl($agent->logo_path ?? null),
@@ -365,6 +366,10 @@ class AuthController extends BaseApiController
 
             if (Schema::hasColumn('agents', 'logo_path')) {
                 $selects[] = 'agents.logo_path';
+            }
+
+            if (Schema::hasColumn('agents', 'contract_code')) {
+                $selects[] = 'agents.contract_code';
             }
 
             if (Schema::hasTable('agent_types')) {

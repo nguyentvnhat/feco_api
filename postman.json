@@ -153,7 +153,8 @@
                 "auth",
                 "me"
               ]
-            }
+            },
+            "description": "Trả thông tin user và agent (nếu có). Trường agent.contract_code là mã hợp đồng duy nhất của đại lý (null nếu chưa nhập)."
           },
           "event": [
             {
@@ -183,6 +184,7 @@
                   "        pm.expect(res.data.agent).to.have.property('ward');",
                   "        pm.expect(res.data.agent).to.have.property('province_code');",
                   "        pm.expect(res.data.agent).to.have.property('ward_code');",
+                  "        pm.expect(res.data.agent).to.have.property('contract_code');",
                   "        pm.expect(res.data.agent.month_revenue).to.be.a('string');",
                   "        pm.expect(res.data.agent.month_commission).to.be.a('string');",
                   "        pm.expect(res.data.agent.has_agent_children).to.be.a('boolean');",
