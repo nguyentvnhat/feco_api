@@ -349,16 +349,16 @@ class OrderController extends BaseApiController
             $converter = app(ProductUnitConverter::class);
             $products = $this->catalogProductsByAgentId($agentId)
                 ->map(function ($product) use ($converter) {
-                    $baseListPrice = $converter->baseUnitListPrice($product);
+                    $barPrice = $this->resolveProductBarListPrice($product, $converter);
 
                     return [
                         'id' => (int) $product->id,
                         'sku' => $product->sku,
                         'name' => $product->name,
                         'sale_unit' => $converter->resolveOrderSaleUnit($product),
-                        'unit_price' => $baseListPrice !== null
-                            ? $this->formatVietnameseMoney($baseListPrice)
-                            : $this->formatVietnameseMoney($product->unit_price),
+                        'unit_price' => $barPrice !== null
+                            ? $this->formatVietnameseMoney($barPrice)
+                            : $this->formatVietnameseMoney(0),
                         'currency' => $this->vietnameseMoneyCurrency(),
                     ];
                 })
@@ -1229,13 +1229,13 @@ class OrderController extends BaseApiController
                 ];
             }
 
-            $unitPricePerBar = $this->resolveProductBaseListPrice($product);
+            $unitPricePerBar = $this->resolveProductBarListPrice($product, $converter);
             if ($unitPricePerBar === null) {
-                $saleUnitPrice = $this->resolveProductUnitPrice($product, $converter);
-                $barsPerSale = $quantities['quantity'] > 0
-                    ? (float) $quantities['quantity_in_base_unit'] / (float) $quantities['quantity']
-                    : 1.0;
-                $unitPricePerBar = $barsPerSale > 0 ? round($saleUnitPrice / $barsPerSale, 2) : $saleUnitPrice;
+                return [
+                    'errors' => [
+                        'products' => ["Sản phẩm #{$row['product_id']} chưa có giá bán."],
+                    ],
+                ];
             }
 
             $lineAmount = round($unitPricePerBar * (float) $quantities['quantity_in_base_unit'], 2);
@@ -1357,9 +1357,10 @@ class OrderController extends BaseApiController
 
         return $query->get()->map(function ($row) {
             $converter = app(ProductUnitConverter::class);
-            $unitPrice = $this->resolveProductUnitPrice($row, $converter);
-            $row->unit_price = $unitPrice;
             $row->list_price_base_unit = $this->resolveProductBaseListPrice($row);
+            $row->list_price = $row->list_price_base_unit;
+            $row->bar_unit_price = $this->resolveProductBarListPrice($row, $converter);
+            $row->unit_price = $row->bar_unit_price ?? $this->resolveProductUnitPrice($row, $converter);
             $row->list_price_sale_unit = $converter->saleUnitListPrice(
                 $row,
                 $row->list_price_base_unit
@@ -1367,6 +1368,34 @@ class OrderController extends BaseApiController
 
             return $row;
         });
+    }
+
+    /**
+     * Giá list theo thanh — ưu tiên `products.list_price`, fallback chia giá hộp nếu cần.
+     */
+    private function resolveProductBarListPrice(object $row, ProductUnitConverter $converter): ?float
+    {
+        $baseListPrice = $this->resolveProductBaseListPrice($row);
+        if ($baseListPrice !== null) {
+            return $baseListPrice;
+        }
+
+        foreach ([
+            $row->ap_unit_price ?? null,
+            $row->ap_price ?? null,
+            $row->product_unit_price ?? null,
+            $row->product_price ?? null,
+        ] as $candidate) {
+            if (! is_numeric($candidate)) {
+                continue;
+            }
+
+            $barsPerBox = max(1, $converter->barsPerShippingBox($row));
+
+            return round((float) $candidate / $barsPerBox, 2);
+        }
+
+        return null;
     }
 
     private function resolveProductBaseListPrice(object $row): ?float
