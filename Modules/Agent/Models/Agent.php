@@ -17,6 +17,7 @@ class Agent extends Model
         'phone',
         'address',
         'tax_code',
+        'contract_code',
         'city',
         'ward',
         'region',
