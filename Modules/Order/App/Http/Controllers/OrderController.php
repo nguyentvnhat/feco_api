@@ -340,6 +340,9 @@ class OrderController extends BaseApiController
         $agentId = $userId
             ? DB::table('agents')->where('user_id', $userId)->value('id')
             : null;
+        $agentProfileId = $userId
+            ? (int) (DB::table('agent_profiles')->where('user_id', $userId)->value('id') ?? 0)
+            : 0;
 
         $products = collect();
         if ($agentId) {
@@ -347,15 +350,14 @@ class OrderController extends BaseApiController
             $products = $this->catalogProductsByAgentId($agentId)
                 ->map(function ($product) use ($converter) {
                     $baseListPrice = $converter->baseUnitListPrice($product);
-                    $saleListPrice = $converter->saleUnitListPrice($product, $baseListPrice);
 
                     return [
                         'id' => (int) $product->id,
                         'sku' => $product->sku,
                         'name' => $product->name,
-                        'sale_unit' => $converter->resolveSaleUnit($product),
-                        'unit_price' => $saleListPrice !== null
-                            ? $this->formatVietnameseMoney($saleListPrice)
+                        'sale_unit' => $converter->resolveOrderSaleUnit($product),
+                        'unit_price' => $baseListPrice !== null
+                            ? $this->formatVietnameseMoney($baseListPrice)
                             : $this->formatVietnameseMoney($product->unit_price),
                         'currency' => $this->vietnameseMoneyCurrency(),
                     ];
@@ -373,6 +375,7 @@ class OrderController extends BaseApiController
             ->get(['province_code', 'code', 'label', 'name']);
 
         return $this->successResponse('api.order.create_success', [
+            'agent_profile_id' => $agentProfileId > 0 ? $agentProfileId : null,
             'products' => $products,
             'provinces' => $provinces,
             'wards' => $wards,
@@ -1642,19 +1645,16 @@ class OrderController extends BaseApiController
      */
     private function formatPricingLineForApi(array $line): array
     {
-        $saleQty = (float) ($line['quantity'] ?? 0);
-        $baseQty = (float) ($line['quantity_in_base_unit'] ?? $saleQty);
-        $barsPerSale = ($saleQty > 0 && $baseQty > 0) ? ($baseQty / $saleQty) : 1.0;
+        $barQty = (float) ($line['quantity_in_base_unit'] ?? $line['quantity'] ?? 0);
         $barPrice = (float) ($line['unit_price'] ?? 0);
-        $boxPrice = round($barPrice * $barsPerSale, 2);
-        $lineAmount = round($saleQty * $boxPrice, 2);
+        $lineAmount = round($barQty * $barPrice, 2);
 
         return [
             'product_id' => (int) ($line['product_id'] ?? 0),
             'product_name' => (string) ($line['product_name'] ?? ''),
-            'unit' => (string) ($line['unit'] ?? 'box'),
-            'quantity' => $saleQty,
-            'unit_price' => $this->formatVietnameseMoney($boxPrice),
+            'unit' => (string) ($line['unit'] ?? 'bar'),
+            'quantity' => $barQty,
+            'unit_price' => $this->formatVietnameseMoney($barPrice),
             'line_amount' => $this->formatVietnameseMoney($lineAmount),
             'currency' => $this->vietnameseMoneyCurrency(),
         ];
@@ -1666,19 +1666,17 @@ class OrderController extends BaseApiController
     private function formatOrderItemForApi(OrderItem $item, mixed $imagePath = null): array
     {
         $barPricing = $this->resolveOrderItemBarPricing($item);
-        $saleQty = (float) $item->quantity;
-        $baseQty = (float) $item->quantity_in_base_unit;
-        $barsPerSale = ($saleQty > 0 && $baseQty > 0) ? ($baseQty / $saleQty) : 1.0;
-        $boxPrice = round($barPricing['unit_price_per_bar'] * $barsPerSale, 2);
-        $lineAmount = round($saleQty * $boxPrice, 2);
+        $barQty = (float) $item->quantity_in_base_unit;
+        $barPrice = $barPricing['unit_price_per_bar'];
+        $lineAmount = round($barQty * $barPrice, 2);
 
         $row = [
             'id' => $item->id,
             'product_id' => $item->product_id,
             'product_name' => $item->product_name_snapshot,
             'unit' => $item->unit,
-            'quantity' => $saleQty,
-            'unit_price' => $this->formatVietnameseMoney($boxPrice),
+            'quantity' => $barQty,
+            'unit_price' => $this->formatVietnameseMoney($barPrice),
             'line_amount' => $this->formatVietnameseMoney($lineAmount),
             'currency' => $this->vietnameseMoneyCurrency(),
         ];

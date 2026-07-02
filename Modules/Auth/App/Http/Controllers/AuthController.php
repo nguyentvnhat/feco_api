@@ -130,6 +130,9 @@ class AuthController extends BaseApiController
         $resolvedWardCode = $agent && $resolvedProvinceCode
             ? $this->resolveAgentWardCode($resolvedProvinceCode, (string) ($agent->ward ?? ''))
             : null;
+        $agentProfileId = Schema::hasTable('agent_profiles')
+            ? (int) (DB::table('agent_profiles')->where('user_id', $user->id)->value('id') ?? 0)
+            : 0;
 
         return $this->successResponse('api.auth.login_success', [
             'user' => [
@@ -140,6 +143,7 @@ class AuthController extends BaseApiController
             ],
             'agent' => $agent ? [
                 'id' => $agent->id,
+                'agent_profile_id' => $agentProfileId > 0 ? $agentProfileId : null,
                 'code' => $agent->code,
                 'contract_code' => trim((string) ($agent->contract_code ?? '')) ?: null,
                 'contract_file_url' => $this->buildAbsoluteAssetUrl($agent->contract_file_path ?? null),
@@ -165,6 +169,7 @@ class AuthController extends BaseApiController
                 'month_commission' => $this->formatVietnameseMoney($monthCommission),
                 'currency' => $this->vietnameseMoneyCurrency(),
                 'has_agent_children' => $this->hasAgentChildren((int) $agent->id),
+                'requires_mobile_welcome' => $this->agentRequiresMobileWelcome($agent),
                 'agent_commission_policy' => $agentCommissionPolicy->values(),
             ] : null,
         ]);
@@ -218,6 +223,37 @@ class AuthController extends BaseApiController
         }
 
         return $this->successResponse('api.auth.logout_success', (object) []);
+    }
+
+    public function acknowledgeMobileWelcome(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (! $user instanceof User) {
+            return $this->errorResponse('api.auth.invalid_credentials', 401, (object) []);
+        }
+
+        if (! Schema::hasTable('agents') || ! Schema::hasColumn('agents', 'mobile_welcome_acknowledged_at')) {
+            return $this->successResponse('api.auth.mobile_welcome_acknowledged', [
+                'requires_mobile_welcome' => false,
+            ]);
+        }
+
+        $agentId = DB::table('agents')->where('user_id', $user->id)->value('id');
+        if (! $agentId) {
+            return $this->errorResponse('api.agent.current_agent_not_found', 422, (object) []);
+        }
+
+        DB::table('agents')
+            ->where('id', (int) $agentId)
+            ->whereNull('mobile_welcome_acknowledged_at')
+            ->update([
+                'mobile_welcome_acknowledged_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+        return $this->successResponse('api.auth.mobile_welcome_acknowledged', [
+            'requires_mobile_welcome' => false,
+        ]);
     }
 
     /**
@@ -382,6 +418,10 @@ class AuthController extends BaseApiController
                 $selects[] = 'agents.short_contract_file_path';
             }
 
+            if (Schema::hasColumn('agents', 'mobile_welcome_acknowledged_at')) {
+                $selects[] = 'agents.mobile_welcome_acknowledged_at';
+            }
+
             if (Schema::hasTable('agent_types')) {
                 $query->leftJoin('agent_types', 'agent_types.id', '=', 'agents.agent_type_id');
                 $selects[] = 'agent_types.code as agent_type_code';
@@ -542,6 +582,15 @@ class AuthController extends BaseApiController
         }
 
         return $baseUrl.'/'.ltrim($path, '/');
+    }
+
+    private function agentRequiresMobileWelcome(?object $agent): bool
+    {
+        if (! $agent || ! Schema::hasColumn('agents', 'mobile_welcome_acknowledged_at')) {
+            return false;
+        }
+
+        return $agent->mobile_welcome_acknowledged_at === null;
     }
 
     private function getUserRoles(int $userId): array

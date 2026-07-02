@@ -20,20 +20,15 @@ class ProductUnitConverter
         $productId = (int) ($product->id ?? 0);
         $baseUnit = $this->resolveBaseUnit($product);
 
-        // App đặt theo hộp; nếu DB chưa có cột sale_unit, suy ra từ quy đổi box → thanh.
-        if ($productId > 0 && Schema::hasTable('product_unit_conversions')) {
-            $hasBoxToBase = DB::table('product_unit_conversions')
-                ->where('product_id', $productId)
-                ->where('from_unit', 'box')
-                ->where('to_unit', $baseUnit)
-                ->exists();
-
-            if ($hasBoxToBase) {
-                return 'box';
-            }
-        }
-
         return $baseUnit;
+    }
+
+    /**
+     * Đơn vị đặt hàng trên app/API — luôn theo đơn vị chuẩn (thanh).
+     */
+    public function resolveOrderSaleUnit(object $product): string
+    {
+        return $this->resolveBaseUnit($product);
     }
 
     public function resolveBaseUnit(object $product): string
@@ -73,15 +68,44 @@ class ProductUnitConverter
      */
     public function buildOrderLineQuantities(object $product, float $saleQuantity): array
     {
-        $saleUnit = $this->resolveSaleUnit($product);
+        $orderUnit = $this->resolveOrderSaleUnit($product);
         $baseUnit = $this->resolveBaseUnit($product);
         $productId = (int) ($product->id ?? 0);
 
         return [
-            'unit' => $saleUnit,
+            'unit' => $orderUnit,
             'quantity' => $saleQuantity,
-            'quantity_in_base_unit' => $this->toBaseUnitQuantity($productId, $baseUnit, $saleUnit, $saleQuantity),
+            'quantity_in_base_unit' => $this->toBaseUnitQuantity($productId, $baseUnit, $orderUnit, $saleQuantity),
         ];
+    }
+
+    /**
+     * Số thanh trong một hộp giao (mặc định 5 nếu không có quy đổi box → bar).
+     */
+    public function barsPerShippingBox(object $product): int
+    {
+        $productId = (int) ($product->id ?? 0);
+        $baseUnit = $this->resolveBaseUnit($product);
+
+        if ($productId <= 0) {
+            return 5;
+        }
+
+        try {
+            return max(1, (int) round($this->toBaseUnitQuantity($productId, $baseUnit, 'box', 1)));
+        } catch (\Throwable) {
+            return 5;
+        }
+    }
+
+    /**
+     * Số hộp giao nguyên — luôn làm tròn lên (vd. 7 thanh → 2 hộp).
+     */
+    public function shippingBoxesFromBars(float $bars, object $product): int
+    {
+        $barsPerBox = $this->barsPerShippingBox($product);
+
+        return (int) ceil($bars / $barsPerBox);
     }
 
     /**

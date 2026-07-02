@@ -14,6 +14,7 @@ return [
         'account_not_activated' => 'Your account is not activated. Please contact administrator.',
         'account_locked' => 'Your account has been locked. Please contact administrator to unlock it.',
         'agent_policy_not_configured' => 'Commission policy has not been configured. Please contact administrator.',
+        'mobile_welcome_acknowledged' => 'Welcome acknowledgement recorded.',
     ],
     'order' => [
         'index_success' => 'User order list loaded successfully.',

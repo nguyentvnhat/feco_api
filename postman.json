@@ -154,7 +154,7 @@
                 "me"
               ]
             },
-            "description": "Trả thông tin user và agent (nếu có). Trường agent.contract_code là mã hợp đồng; agent.contract_file_url / agent.short_contract_file_url là link file hợp đồng đầy đủ / rút gọn (null nếu chưa upload)."
+            "description": "Trả thông tin user và agent (nếu có). agent.requires_mobile_welcome=true khi đại lý chưa xác nhận popup chào mừng lần đầu trên app."
           },
           "event": [
             {
@@ -185,6 +185,7 @@
                   "        pm.expect(res.data.agent).to.have.property('province_code');",
                   "        pm.expect(res.data.agent).to.have.property('ward_code');",
                   "        pm.expect(res.data.agent).to.have.property('contract_code');",
+                  "        pm.expect(res.data.agent).to.have.property('requires_mobile_welcome');",
                   "        pm.expect(res.data.agent).to.have.property('contract_file_url');",
                   "        pm.expect(res.data.agent).to.have.property('short_contract_file_url');",
                   "        pm.expect(res.data.agent.month_revenue).to.be.a('string');",
@@ -201,6 +202,59 @@
                   "        pm.expect(p).to.have.property('policy_name');",
                   "    });",
                   "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Acknowledge Mobile Welcome",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/acknowledge-mobile-welcome",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "acknowledge-mobile-welcome"
+              ]
+            },
+            "description": "Đại lý bấm Đồng ý trên popup chào mừng lần đầu. Ghi nhận mobile_welcome_acknowledged_at và trả requires_mobile_welcome=false."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Acknowledge status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Welcome no longer required', function () {",
+                  "    pm.expect(res.data.requires_mobile_welcome).to.eql(false);",
+                  "});"
                 ]
               }
             }
@@ -577,6 +631,7 @@
                   "});",
                   "",
                   "pm.test('Contains products/provinces/wards', function () {",
+                  "    pm.expect(res.data).to.have.property('agent_profile_id');",
                   "    pm.expect(res.data).to.have.property('products');",
                   "    pm.expect(res.data).to.have.property('provinces');",
                   "    pm.expect(res.data).to.have.property('wards');",
