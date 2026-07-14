@@ -32,6 +32,7 @@ class OrderServiceProvider extends ServiceProvider
         $this->app->singleton(\Modules\Order\App\Services\OrderPricingService::class);
         $this->app->singleton(\Modules\Order\Support\AgentHierarchyRollup::class);
         $this->app->singleton(\Modules\Order\App\Services\AgentMonthlyBonusService::class);
+        $this->app->singleton(\Modules\Order\App\Services\AgentPartnershipCommissionService::class);
         $this->app->register(RouteServiceProvider::class);
     }
 
