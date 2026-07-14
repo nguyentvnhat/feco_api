@@ -437,7 +437,12 @@ class AgentCommissionPolicyApiService
         }
 
         if (filter_var($path, FILTER_VALIDATE_URL)) {
-            return $path;
+            $storagePath = $this->extractStorageRelativePath($path);
+            if ($storagePath === null) {
+                return $path;
+            }
+
+            $path = $storagePath;
         }
 
         $baseUrl = rtrim((string) (config('app.url_image') ?: config('app.url')), '/');
@@ -448,6 +453,20 @@ class AgentCommissionPolicyApiService
         }
 
         return $baseUrl.$relative;
+    }
+
+    private function extractStorageRelativePath(string $url): ?string
+    {
+        $path = parse_url($url, PHP_URL_PATH);
+        if (! is_string($path) || $path === '') {
+            return null;
+        }
+
+        if (preg_match('#(/storage/.+)$#', $path, $matches)) {
+            return $matches[1];
+        }
+
+        return null;
     }
 
     /**
