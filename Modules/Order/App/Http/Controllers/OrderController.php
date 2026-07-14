@@ -120,35 +120,58 @@ class OrderController extends BaseApiController
             'ce.settlement_status',
         ]);
 
+        $entrySelects = [
+            'ce.id',
+            'ce.source_order_id as order_id',
+            'o.order_no',
+            'ce.amount',
+            'ce.rate_percent',
+            'ce.basis_type',
+            'ce.basis_value',
+            'ce.settlement_status',
+            'ce.entry_type',
+            'ce.policy_id',
+            'cp.policy_code',
+            'cp.policy_name',
+            'cp.policy_type',
+            'ce.created_at',
+        ];
+        if (Schema::hasColumn('commission_entries', 'snapshot_json')) {
+            $entrySelects[] = 'ce.snapshot_json';
+        }
+
         $entryRows = (clone $baseQuery)
+            ->leftJoin('commission_policies as cp', 'cp.id', '=', 'ce.policy_id')
             ->orderByDesc('ce.id')
             ->limit($limit)
-            ->get([
-                'ce.id',
-                'ce.source_order_id as order_id',
-                'o.order_no',
-                'ce.amount',
-                'ce.rate_percent',
-                'ce.basis_type',
-                'ce.basis_value',
-                'ce.settlement_status',
-                'ce.created_at',
-            ]);
+            ->get($entrySelects);
 
-        $entries = $entryRows->map(fn ($row) => [
-            'id' => (int) $row->id,
-            'order_id' => $row->order_id !== null ? (int) $row->order_id : null,
-            'order_no' => $row->order_no !== null ? (string) $row->order_no : null,
-            'amount' => $this->formatVietnameseMoney($row->amount),
-            'rate_percent' => $row->rate_percent !== null ? (float) $row->rate_percent : null,
-            'basis_type' => $row->basis_type !== null ? (string) $row->basis_type : null,
-            'basis_value' => $this->formatVietnameseMoney($row->basis_value),
-            'settlement_status' => (string) $row->settlement_status,
-            'settlement_status_label_vi' => $this->commissionSettlementStatusLabelVi((string) $row->settlement_status),
-            'created_at' => $row->created_at !== null
-                ? now()->parse($row->created_at)->toIso8601String()
-                : null,
-        ])->values()->all();
+        $entries = $entryRows->map(function ($row) {
+            $basisType = $row->basis_type !== null ? (string) $row->basis_type : null;
+            $basisValue = $this->formatCommissionBasisValue($basisType, $row->basis_value);
+            $snapshot = $this->decodeJsonObject($row->snapshot_json ?? null);
+
+            return [
+                'id' => (int) $row->id,
+                'order_id' => $row->order_id !== null ? (int) $row->order_id : null,
+                'order_no' => $row->order_no !== null ? (string) $row->order_no : null,
+                'entry_type' => $row->entry_type !== null ? (string) $row->entry_type : null,
+                'policy_id' => $row->policy_id !== null ? (int) $row->policy_id : null,
+                'policy_code' => $row->policy_code !== null ? (string) $row->policy_code : null,
+                'policy_name' => $row->policy_name !== null ? (string) $row->policy_name : null,
+                'policy_type' => $row->policy_type !== null ? (string) $row->policy_type : null,
+                'amount' => $this->formatVietnameseMoney($row->amount),
+                'rate_percent' => $row->rate_percent !== null ? (float) $row->rate_percent : null,
+                'basis_type' => $basisType,
+                'basis_value' => $basisValue,
+                'settlement_status' => (string) $row->settlement_status,
+                'settlement_status_label_vi' => $this->commissionSettlementStatusLabelVi((string) $row->settlement_status),
+                'partnership_id' => isset($snapshot['partnership_id']) ? (int) $snapshot['partnership_id'] : null,
+                'created_at' => $row->created_at !== null
+                    ? now()->parse($row->created_at)->toIso8601String()
+                    : null,
+            ];
+        })->values()->all();
 
         return $this->successResponse('api.order.history_commission_success', [
             'period_month' => $periodMonth,
@@ -233,15 +256,43 @@ class OrderController extends BaseApiController
                 /** @var Order $order */
                 $order = $row['order'];
                 $discount = (float) $row['discount'];
+                $snapshot = is_array($order->discount_snapshot_json) ? $order->discount_snapshot_json : [];
+                $appliedTiers = $this->formatAppliedTiersFromOrderDiscountSnapshot($order);
+                $firstTier = $appliedTiers[0] ?? null;
+
+                $policyId = isset($snapshot['policy_id'])
+                    ? (int) $snapshot['policy_id']
+                    : ($order->applied_discount_policy_id !== null ? (int) $order->applied_discount_policy_id : null);
+                $policyCode = isset($snapshot['policy_code']) ? (string) $snapshot['policy_code'] : null;
+                $policyName = isset($snapshot['policy_name']) ? (string) $snapshot['policy_name'] : null;
+
+                if (($policyCode === null || $policyCode === '' || $policyName === null || $policyName === '')
+                    && $policyId
+                    && Schema::hasTable('commission_policies')) {
+                    $policyRow = DB::table('commission_policies')->where('id', $policyId)->first(['policy_code', 'policy_name']);
+                    if ($policyRow !== null) {
+                        $policyCode = $policyCode ?: (string) ($policyRow->policy_code ?? '');
+                        $policyName = $policyName ?: (string) ($policyRow->policy_name ?? '');
+                    }
+                }
 
                 return [
                     'id' => (int) $order->id,
                     'order_id' => (int) $order->id,
                     'order_no' => (string) $order->order_no,
+                    'entry_type' => 'discount',
+                    'policy_id' => $policyId,
+                    'policy_code' => $policyCode !== '' ? $policyCode : null,
+                    'policy_name' => $policyName !== '' ? $policyName : null,
+                    'calculation_method' => isset($snapshot['calculation_method']) ? (string) $snapshot['calculation_method'] : null,
                     'amount' => $this->formatVietnameseMoney($discount),
-                    'rate_percent' => null,
-                    'basis_type' => null,
-                    'basis_value' => null,
+                    'rate_percent' => $firstTier !== null && ($firstTier['reward_percent'] ?? '') !== ''
+                        ? (float) $firstTier['reward_percent']
+                        : null,
+                    'reward_amount_per_unit' => $firstTier['reward_amount_per_unit'] ?? null,
+                    'basis_type' => isset($snapshot['calculation_base']) ? (string) $snapshot['calculation_base'] : null,
+                    'basis_value' => isset($snapshot['monthly_qty_after']) ? (string) $snapshot['monthly_qty_after'] : null,
+                    'applied_tiers' => $appliedTiers,
                     'settlement_status' => $order->statusValue(),
                     'settlement_status_label_vi' => OrderStatus::orderLabelStatusForValue($order->statusValue()),
                     'created_at' => $order->order_date?->toIso8601String()
@@ -1024,12 +1075,53 @@ class OrderController extends BaseApiController
         $formatted = $this->formatVietnameseMoney($totalDiscount);
 
         return [
+            // Giữ key cũ để tương thích app đang dùng
             'total_commission' => $formatted,
             'pending_commission' => $this->formatVietnameseMoney(0),
             'approved_commission' => $this->formatVietnameseMoney(0),
             'paid_commission' => $formatted,
+            'total_discount' => $formatted,
             'entry_count' => $entryCount,
         ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function decodeJsonObject(mixed $raw): array
+    {
+        if (is_array($raw)) {
+            return $raw;
+        }
+
+        if (is_string($raw) && $raw !== '') {
+            $decoded = json_decode($raw, true);
+
+            return is_array($decoded) ? $decoded : [];
+        }
+
+        return [];
+    }
+
+    private function formatCommissionBasisValue(?string $basisType, mixed $basisValue): string|float|null
+    {
+        if ($basisValue === null || $basisValue === '') {
+            return null;
+        }
+
+        $qtyLike = in_array((string) $basisType, [
+            'quantity',
+            'box_count',
+            'partnership_order_box_count',
+            'order_box_count',
+            'monthly_box_count',
+        ], true);
+
+        if ($qtyLike) {
+            return (float) $basisValue;
+        }
+
+        return $this->formatVietnameseMoney($basisValue);
     }
 
     private function toMoneyBcString(mixed $value): string
@@ -1275,7 +1367,11 @@ class OrderController extends BaseApiController
             return [];
         }
 
-        return collect($snapshot['breakdowns'])->map(function (array $row) {
+        return collect($snapshot['breakdowns'])->map(function (array $row) use ($snapshot) {
+            $tierSnapshot = is_array($row['snapshot_json'] ?? null) ? $row['snapshot_json'] : [];
+            $rewardAmountPerUnit = $tierSnapshot['reward_amount_per_unit'] ?? null;
+            $calculationMethod = (string) ($tierSnapshot['calculation_method'] ?? ($snapshot['calculation_method'] ?? ''));
+
             return [
                 'commission_policy_id' => (int) ($row['commission_policy_id'] ?? 0),
                 'commission_policy_tier_id' => (int) ($row['commission_policy_tier_id'] ?? 0),
@@ -1283,6 +1379,10 @@ class OrderController extends BaseApiController
                 'qty_to' => (string) ($row['qty_to'] ?? ''),
                 'applied_qty' => (string) ($row['applied_qty'] ?? ''),
                 'reward_percent' => (string) ($row['reward_percent'] ?? ''),
+                'reward_amount_per_unit' => $rewardAmountPerUnit !== null && $rewardAmountPerUnit !== ''
+                    ? (float) $rewardAmountPerUnit
+                    : null,
+                'calculation_method' => $calculationMethod !== '' ? $calculationMethod : null,
                 'basis_amount' => $this->formatVietnameseMoney($row['basis_amount'] ?? 0),
                 'discount_amount' => $this->formatVietnameseMoney($row['discount_amount'] ?? 0),
             ];
@@ -1309,6 +1409,8 @@ class OrderController extends BaseApiController
                     'qty_to' => $t['qty_to'],
                     'applied_qty' => $t['applied_qty'],
                     'reward_percent' => $t['reward_percent'],
+                    'reward_amount_per_unit' => $t['reward_amount_per_unit'] ?? null,
+                    'calculation_method' => $t['calculation_method'] ?? null,
                     'basis_amount' => $this->formatVietnameseMoney($t['basis_amount']),
                     'discount_amount' => $this->formatVietnameseMoney($t['discount_amount']),
                 ];

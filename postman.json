@@ -200,6 +200,10 @@
                   "        pm.expect(p).to.have.property('commission_policy_id');",
                   "        pm.expect(p).to.have.property('policy_code');",
                   "        pm.expect(p).to.have.property('policy_name');",
+                  "        pm.expect(p).to.have.property('tiers');",
+                  "        pm.expect(p.tiers).to.be.an('array');",
+                  "        pm.expect(p).to.have.property('calculation_method');",
+                  "        pm.expect(p).to.have.property('progress');",
                   "    });",
                   "}"
                 ]
@@ -330,7 +334,7 @@
           }
         ]
       },
-      "description": "OrderController: list, search, history commission, statuses, create metadata, show, preview (tier discount), store, update.",
+      "description": "OrderController: list, search, history commission, history discount, statuses, create metadata, show, preview (tier discount), store, update.",
       "item": [
         {
           "name": "List My Orders",
@@ -462,7 +466,7 @@
           "name": "Order History Commission",
           "request": {
             "method": "GET",
-            "description": "Hoa hồng của đại lý đang đăng nhập (commission_entries theo beneficiary_user_id, loại trừ entry_type=discount). Query: month (YYYY-MM), all=1 để xem tất cả tháng, status (pending|approved|paid|rejected), limit (mặc định 20).",
+            "description": "Hoa hồng/thưởng của đại lý đang đăng nhập (commission_entries theo beneficiary_user_id, loại trừ entry_type=discount). Mỗi entry gồm entry_type, policy_id/code/name, amount, rate_percent, basis_type/value, partnership_id (nếu VP). Query: month (YYYY-MM), all=1 để xem tất cả tháng, status (pending|approved|paid|rejected), limit (mặc định 20).",
             "header": [
               {
                 "key": "Accept",
@@ -533,6 +537,87 @@
                   "        pm.expect(e).to.have.property('amount');",
                   "        pm.expect(e).to.have.property('settlement_status');",
                   "        pm.expect(e).to.have.property('order_no');",
+                  "        pm.expect(e).to.have.property('entry_type');",
+                  "        pm.expect(e).to.have.property('policy_code');",
+                  "        pm.expect(e).to.have.property('policy_name');",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Order History Discount",
+          "request": {
+            "method": "GET",
+            "description": "Lịch sử chiết khấu đã áp trên đơn tự mua của đại lý. Mỗi entry gồm policy_id/code/name, calculation_method, rate_percent hoặc reward_amount_per_unit (NPP flat), applied_tiers, amount. Query: month (YYYY-MM), all=1, limit.",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/order/history-discount?month=&all=&limit=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "order",
+                "history-discount"
+              ],
+              "query": [
+                {
+                  "key": "month",
+                  "value": "",
+                  "description": "optional | YYYY-MM (mặc định tháng hiện tại)"
+                },
+                {
+                  "key": "all",
+                  "value": "",
+                  "description": "optional | 1/true để bỏ lọc tháng và xem tất cả"
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "optional | 1–100, mặc định 20"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('History discount status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Chiết khấu — has summary', function () {",
+                  "    pm.expect(res).to.have.property('success', true);",
+                  "    pm.expect(res.data).to.have.property('summary');",
+                  "    pm.expect(res.data.summary).to.have.property('total_discount');",
+                  "    pm.expect(res.data.summary).to.have.property('entry_count');",
+                  "});",
+                  "",
+                  "pm.test('Response has entries array', function () {",
+                  "    pm.expect(res.data).to.have.property('entries');",
+                  "    pm.expect(res.data.entries).to.be.an('array');",
+                  "});",
+                  "",
+                  "if (res.data.entries && res.data.entries.length > 0) {",
+                  "    pm.test('Each discount entry has policy and applied_tiers', function () {",
+                  "        var e = res.data.entries[0];",
+                  "        pm.expect(e).to.have.property('amount');",
+                  "        pm.expect(e).to.have.property('entry_type', 'discount');",
+                  "        pm.expect(e).to.have.property('applied_tiers');",
+                  "        pm.expect(e.applied_tiers).to.be.an('array');",
                   "    });",
                   "}"
                 ]

@@ -364,6 +364,10 @@ class OrderPricingService
     private function formatAppliedTiersForApi(array $breakdowns): array
     {
         return array_map(function (array $row) {
+            $snapshot = is_array($row['snapshot_json'] ?? null) ? $row['snapshot_json'] : [];
+            $calculationMethod = (string) ($snapshot['calculation_method'] ?? '');
+            $rewardAmountPerUnit = $snapshot['reward_amount_per_unit'] ?? null;
+
             return [
                 'commission_policy_id' => $row['commission_policy_id'],
                 'commission_policy_tier_id' => $row['commission_policy_tier_id'],
@@ -371,6 +375,10 @@ class OrderPricingService
                 'qty_to' => $row['qty_to'],
                 'applied_qty' => $row['applied_qty'],
                 'reward_percent' => $row['reward_percent'],
+                'reward_amount_per_unit' => $rewardAmountPerUnit !== null && $rewardAmountPerUnit !== ''
+                    ? (float) $rewardAmountPerUnit
+                    : null,
+                'calculation_method' => $calculationMethod !== '' ? $calculationMethod : null,
                 'basis_amount' => (float) $row['basis_amount'],
                 'discount_amount' => (float) $row['discount_amount'],
             ];
@@ -408,6 +416,7 @@ class OrderPricingService
         return [
             'policy_id' => (int) $policy->id,
             'policy_code' => (string) ($policy->policy_code ?? ''),
+            'policy_name' => (string) ($policy->policy_name ?? ''),
             'calculation_method' => $calculationMethod,
             'calculation_base' => (string) ($policy->calculation_base ?? 'quantity'),
             'monthly_qty_before' => $this->qtyDisplay($ladderBefore),

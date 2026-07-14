@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
 use Laravel\Sanctum\PersonalAccessToken;
 use Modules\Order\Enums\OrderStatus;
+use Modules\Order\App\Services\AgentCommissionPolicyApiService;
 
 class AuthController extends BaseApiController
 {
@@ -333,33 +334,32 @@ class AuthController extends BaseApiController
 
     private function getMonthlyCommissionForSeller(int $userId, string $agentCode): float
     {
-        if (! Schema::hasTable('commission_entries') || ! Schema::hasTable('orders')) {
+        if (! Schema::hasTable('commission_entries')) {
             return 0.0;
         }
 
-        $query = DB::table('commission_entries')
-            ->join('orders', 'orders.id', '=', 'commission_entries.source_order_id');
+        $periodMonth = now()->format('Y-m');
 
-        $agentProfileId = $this->resolveAgentProfileIdForOrders($userId, $agentCode);
-        if ($agentProfileId && Schema::hasColumn('orders', 'agent_profile_id')) {
-            $query->where('orders.agent_profile_id', $agentProfileId);
-        } elseif (Schema::hasColumn('orders', 'seller_user_id')) {
-            $query->where('orders.seller_user_id', $userId);
+        $query = DB::table('commission_entries as ce')
+            ->where('ce.beneficiary_user_id', $userId)
+            ->where('ce.entry_type', '!=', 'discount');
+
+        if (Schema::hasTable('orders') && Schema::hasColumn('orders', 'order_month')) {
+            $query->leftJoin('orders as o', 'o.id', '=', 'ce.source_order_id')
+                ->where(function ($w) use ($periodMonth): void {
+                    $w->where(function ($w2) use ($periodMonth): void {
+                        $w2->whereNotNull('ce.source_order_id')
+                            ->where('o.order_month', $periodMonth);
+                    })->orWhere(function ($w2) use ($periodMonth): void {
+                        $w2->whereNull('ce.source_order_id')
+                            ->whereRaw("DATE_FORMAT(ce.created_at, '%Y-%m') = ?", [$periodMonth]);
+                    });
+                });
         } else {
-            return 0.0;
+            $query->whereRaw("DATE_FORMAT(ce.created_at, '%Y-%m') = ?", [$periodMonth]);
         }
 
-        if (Schema::hasColumn('orders', 'order_month')) {
-            $query->where('orders.order_month', now()->format('Y-m'));
-        } elseif (Schema::hasColumn('orders', 'order_date')) {
-            $query->whereBetween('orders.order_date', [now()->copy()->startOfMonth(), now()->copy()->endOfMonth()]);
-        }
-
-        if (Schema::hasColumn('orders', 'order_status')) {
-            $query->where('orders.order_status', OrderStatus::READY_TO_SHIP->value);
-        }
-
-        return (float) $query->sum('commission_entries.amount');
+        return (float) $query->sum('ce.amount');
     }
 
     private function formatIsoDateTime(CarbonInterface $dateTime): string
@@ -467,22 +467,17 @@ class AuthController extends BaseApiController
                 }
 
                 $agentCommissionPolicy = $policyQuery
-                    ->get($policySelects)
-                    ->map(function ($row) {
-                        return [
-                            'id' => (int) $row->id,
-                            'commission_policy_id' => (int) ($row->commission_policy_id ?? 0),
-                            'policy_code' => $row->policy_code ?? null,
-                            'policy_name' => $row->policy_name ?? null,
-                            'policy_type' => $row->policy_type ?? null,
-                            'target_subject' => $row->target_subject ?? null,
-                            'calculation_base' => $row->calculation_base ?? null,
-                            'reward_type' => $row->reward_type ?? null,
-                            'description' => $row->description ?? null,
-                            'is_active' => isset($row->is_active) ? (bool) $row->is_active : true,
-                        ];
-                    })
-                    ->values();
+                    ->get($policySelects);
+
+                $agentProfileIdForProgress = Schema::hasTable('agent_profiles')
+                    ? (int) (DB::table('agent_profiles')->where('user_id', $user->id)->value('id') ?? 0)
+                    : 0;
+
+                $agentCommissionPolicy = app(AgentCommissionPolicyApiService::class)
+                    ->enrichAssignments(
+                        $agentCommissionPolicy,
+                        $agentProfileIdForProgress > 0 ? $agentProfileIdForProgress : null
+                    );
             }
         }
 
