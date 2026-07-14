@@ -181,6 +181,36 @@ class OrderTierDiscountEngineTest extends TestCase
         $this->assertSame('70.0000', $result['breakdowns'][0]['applied_qty']);
     }
 
+    public function test_fixed_amount_per_unit_npp_connected_200k_per_bar_equals_1m_per_box(): void
+    {
+        // 1 bộ = 5 thanh → 5 × 200.000 = 1.000.000đ/bộ (NPP_CONNECTED_SALES_BONUS_1M).
+        $policyId = 9;
+        $tiers = [
+            ['id' => 901, 'min_value' => '1', 'max_value' => null, 'reward_percent' => null, 'reward_amount' => '200000'],
+        ];
+
+        $fiveBars = OrderTierDiscountEngine::computeFixedAmountPerUnitFromLines(
+            $policyId,
+            '0',
+            '5',
+            '19250000.00',
+            $tiers,
+            '5',
+        );
+        $this->assertSame('1000000.00', $fiveBars['total_discount_amount']);
+        $this->assertSame('200000.00', $fiveBars['breakdowns'][0]['snapshot_json']['reward_amount_per_unit']);
+
+        $oneBar = OrderTierDiscountEngine::computeFixedAmountPerUnitFromLines(
+            $policyId,
+            '0',
+            '1',
+            '3850000.00',
+            $tiers,
+            '1',
+        );
+        $this->assertSame('200000.00', $oneBar['total_discount_amount']);
+    }
+
     public function test_preview_and_store_totals_match_for_same_lines(): void
     {
         $policyId = 4;
