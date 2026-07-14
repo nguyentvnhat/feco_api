@@ -51,7 +51,9 @@ class OrderPricingService
         if ($policy !== null) {
             $conditions = $this->decodeConditions($policy);
             $eligibleStatuses = $this->eligibleOrderStatuses($conditions);
-            $isMonthly = $this->isMonthlyPolicy($policy);
+            $fixedPerUnitEarly = (bool) data_get($conditions, 'agent_order_discount.fixed_amount_per_unit', false)
+                || ((string) ($policy->reward_type ?? '') === 'fixed_amount');
+            $isMonthly = ! $fixedPerUnitEarly && $this->isMonthlyPolicy($policy);
             if ($isMonthly) {
                 $monthlyQtyBefore = $this->sumMonthlyAccumulatedQuantity(
                     $agentProfileId,
@@ -92,13 +94,18 @@ class OrderPricingService
         }
 
         $conditions = $this->decodeConditions($policy);
-        $calculationMethod = $conditions['calculation_method'] ?? 'progressive';
-        if (! in_array($calculationMethod, ['progressive', 'flat'], true)) {
+        $fixedPerUnit = (bool) data_get($conditions, 'agent_order_discount.fixed_amount_per_unit', false)
+            || ((string) ($policy->reward_type ?? '') === 'fixed_amount');
+
+        $calculationMethod = $fixedPerUnit
+            ? 'fixed_amount_per_unit'
+            : ($conditions['calculation_method'] ?? 'progressive');
+        if (! $fixedPerUnit && ! in_array($calculationMethod, ['progressive', 'flat'], true)) {
             $calculationMethod = 'progressive';
         }
 
-        $engineResult = $calculationMethod === 'flat'
-            ? OrderTierDiscountEngine::computeFlatPercentFromLines(
+        $engineResult = $fixedPerUnit
+            ? OrderTierDiscountEngine::computeFixedAmountPerUnitFromLines(
                 (int) $policy->id,
                 $monthlyQtyBefore,
                 $currentOrderQty,
@@ -106,17 +113,26 @@ class OrderPricingService
                 $tiers,
                 $monthlyQtyAfter
             )
-            : OrderTierDiscountEngine::computeProgressivePercentFromLines(
-                (int) $policy->id,
-                $monthlyQtyBefore,
-                $currentOrderQty,
-                $subtotalBc,
-                $tiers,
-                $monthlyQtyAfter,
-                $lines
-            );
+            : ($calculationMethod === 'flat'
+                ? OrderTierDiscountEngine::computeFlatPercentFromLines(
+                    (int) $policy->id,
+                    $monthlyQtyBefore,
+                    $currentOrderQty,
+                    $subtotalBc,
+                    $tiers,
+                    $monthlyQtyAfter
+                )
+                : OrderTierDiscountEngine::computeProgressivePercentFromLines(
+                    (int) $policy->id,
+                    $monthlyQtyBefore,
+                    $currentOrderQty,
+                    $subtotalBc,
+                    $tiers,
+                    $monthlyQtyAfter,
+                    $lines
+                ));
 
-        $policyPayload = $this->formatPolicyPayload($policy, $calculationMethod, $isMonthly);
+        $policyPayload = $this->formatPolicyPayload($policy, $calculationMethod, $isMonthly && ! $fixedPerUnit);
 
         return [
             'policy' => $policyPayload,
@@ -227,7 +243,7 @@ class OrderPricingService
             ->where('cp.target_subject', 'agent')
             ->where('cp.is_active', 1)
             ->whereIn('cp.calculation_base', ['quantity', 'box_count'])
-            ->where('cp.reward_type', 'percent');
+            ->whereIn('cp.reward_type', ['percent', 'fixed_amount']);
 
         if (Schema::hasColumn('agent_commission_policy', 'agent_profile_id')) {
             $q->where(function ($w) use ($agentProfileId, $agentId): void {
@@ -269,7 +285,7 @@ class OrderPricingService
     }
 
     /**
-     * @return list<array{id:int,min_value:?string,max_value:?string,reward_percent:?string}>
+     * @return list<array{id:int,min_value:?string,max_value:?string,reward_percent:?string,reward_amount:?string}>
      */
     private function loadPolicyTiers(int $policyId): array
     {
@@ -281,12 +297,13 @@ class OrderPricingService
             ->where('policy_id', $policyId)
             ->orderByRaw('min_value IS NULL, min_value ASC')
             ->orderBy('id')
-            ->get(['id', 'min_value', 'max_value', 'reward_percent'])
+            ->get(['id', 'min_value', 'max_value', 'reward_percent', 'reward_amount'])
             ->map(fn ($row) => [
                 'id' => (int) $row->id,
                 'min_value' => $row->min_value !== null ? (string) $row->min_value : null,
                 'max_value' => $row->max_value !== null ? (string) $row->max_value : null,
                 'reward_percent' => $row->reward_percent !== null ? (string) $row->reward_percent : null,
+                'reward_amount' => $row->reward_amount !== null ? (string) $row->reward_amount : null,
             ])
             ->all();
     }

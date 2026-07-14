@@ -5,7 +5,7 @@ namespace Modules\Order\Support;
 /**
  * Tier discount theo **số lượng** (min_value / max_value trên commission_policy_tiers).
  *
- * Progressive: lần lượt lấp đầy headroom từng bậc từ số lượng đơn hiện tại (vd. 95 sp @25% + 5 sp @30%);
+ * Progressive: lần lượt lấp đầy headroom từng bậc từ số lượng đơn hiện tại (vd. 99 thanh @25% + vượt sang bậc 30%);
  * discount mỗi bậc = (tiền hàng thuộc phần SL đó) × reward_percent / 100, **cộng dồn**.
  *
  * Flat: chọn một nấc theo vị trí kết thúc cộng dồn; discount = subtotal × reward_percent / 100.
@@ -214,6 +214,83 @@ final class OrderTierDiscountEngine
                     : null,
                 'calculation_method' => 'flat',
                 'basis_rule' => 'order_subtotal',
+            ],
+        ]];
+
+        return [
+            'breakdowns' => $breakdowns,
+            'total_discount_amount' => $discountRounded,
+            'net_amount' => self::moneyFormat2($netBc),
+        ];
+    }
+
+    /**
+     * Chiết khấu cố định theo đơn vị cơ sở (thanh): reward_amount × số thanh trên đơn.
+     * Không phụ thuộc bậc sản lượng tháng.
+     *
+     * @param  list<array{id:int,min_value:?string,max_value:?string,reward_percent:?string,reward_amount?:?string}>  $tiers
+     * @return array{
+     *     breakdowns: list<array<string, mixed>>,
+     *     total_discount_amount: string,
+     *     net_amount: string
+     * }
+     */
+    public static function computeFixedAmountPerUnitFromLines(
+        int $commissionPolicyId,
+        string $monthlyQtyBefore,
+        string $currentOrderQty,
+        string $subtotalBc,
+        array $tiers,
+        string $monthlyQtyAfter,
+    ): array {
+        if (bccomp($currentOrderQty, '0', 4) <= 0 || $tiers === []) {
+            return self::emptyResult($subtotalBc);
+        }
+
+        $selected = null;
+        foreach ($tiers as $tier) {
+            $amount = $tier['reward_amount'] ?? null;
+            if ($amount === null || $amount === '' || bccomp(self::toBc((string) $amount, '2'), '0', 2) <= 0) {
+                continue;
+            }
+            $selected = $tier;
+            break;
+        }
+
+        if ($selected === null) {
+            return self::emptyResult($subtotalBc);
+        }
+
+        $unitAmount = self::toBc((string) $selected['reward_amount'], '2');
+        $discountRaw = bcmul($unitAmount, self::toBc($currentOrderQty, '4'), self::BC);
+        $discountRounded = self::moneyFormat2($discountRaw);
+        $netBc = bcsub(self::toBc($subtotalBc, '2'), self::toBc($discountRounded, '2'), self::BC);
+
+        $sliceStart = self::bcAdd($monthlyQtyBefore, '1', 4);
+        $tierMin = self::toBc($selected['min_value'] ?? '0', '4');
+        $tierMax = isset($selected['max_value']) && $selected['max_value'] !== null && $selected['max_value'] !== ''
+            ? self::toBc((string) $selected['max_value'], '4')
+            : null;
+
+        $breakdowns = [[
+            'commission_policy_id' => $commissionPolicyId,
+            'commission_policy_tier_id' => (int) $selected['id'],
+            'qty_from' => self::qtyFormat4($sliceStart),
+            'qty_to' => self::qtyFormat4($monthlyQtyAfter),
+            'applied_qty' => self::qtyFormat4($currentOrderQty),
+            'reward_percent' => self::moneyFormat2('0'),
+            'basis_amount' => self::moneyFormat2($subtotalBc),
+            'discount_amount' => $discountRounded,
+            'snapshot_json' => [
+                'monthly_qty_before' => self::qtyFormat4($monthlyQtyBefore),
+                'monthly_qty_after' => self::qtyFormat4($monthlyQtyAfter),
+                'slice_start' => self::qtyFormat4($sliceStart),
+                'slice_end' => self::qtyFormat4($monthlyQtyAfter),
+                'tier_min' => self::qtyFormat4($tierMin),
+                'tier_max' => $tierMax !== null ? self::qtyFormat4($tierMax) : null,
+                'calculation_method' => 'fixed_amount_per_unit',
+                'basis_rule' => 'reward_amount_x_order_base_qty',
+                'reward_amount_per_unit' => self::moneyFormat2($unitAmount),
             ],
         ]];
 

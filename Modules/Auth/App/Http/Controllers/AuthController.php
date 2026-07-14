@@ -442,13 +442,17 @@ class AuthController extends BaseApiController
                     ->where('agent_commission_policy.agent_id', $agent->id)
                     ->orderBy('agent_commission_policy.commission_policy_id');
 
+                if (Schema::hasColumn('agent_commission_policy', 'is_active')) {
+                    $policyQuery->where('agent_commission_policy.is_active', 1);
+                }
+
                 if (Schema::hasTable('commission_policies')) {
-                    $policyQuery->leftJoin(
+                    $policyQuery->join(
                         'commission_policies',
                         'commission_policies.id',
                         '=',
                         'agent_commission_policy.commission_policy_id'
-                    );
+                    )->where('commission_policies.is_active', 1);
 
                     $policySelects = array_merge($policySelects, [
                         'commission_policies.policy_code',
@@ -467,12 +471,15 @@ class AuthController extends BaseApiController
                     ->map(function ($row) {
                         return [
                             'id' => (int) $row->id,
+                            'commission_policy_id' => (int) ($row->commission_policy_id ?? 0),
+                            'policy_code' => $row->policy_code ?? null,
                             'policy_name' => $row->policy_name ?? null,
                             'policy_type' => $row->policy_type ?? null,
                             'target_subject' => $row->target_subject ?? null,
                             'calculation_base' => $row->calculation_base ?? null,
                             'reward_type' => $row->reward_type ?? null,
                             'description' => $row->description ?? null,
+                            'is_active' => isset($row->is_active) ? (bool) $row->is_active : true,
                         ];
                     })
                     ->values();
