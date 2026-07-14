@@ -452,7 +452,9 @@ class AuthController extends BaseApiController
                         'commission_policies.id',
                         '=',
                         'agent_commission_policy.commission_policy_id'
-                    )->where('commission_policies.is_active', 1);
+                    )
+                        ->where('commission_policies.is_active', 1)
+                        ->whereIn('commission_policies.target_subject', ['agent', 'both']);
 
                     $policySelects = array_merge($policySelects, [
                         'commission_policies.policy_code',
@@ -464,6 +466,10 @@ class AuthController extends BaseApiController
                         'commission_policies.description',
                         'commission_policies.is_active',
                     ]);
+
+                    if (Schema::hasColumn('commission_policies', 'conditions_json')) {
+                        $policySelects[] = 'commission_policies.conditions_json';
+                    }
                 }
 
                 $agentCommissionPolicy = $policyQuery

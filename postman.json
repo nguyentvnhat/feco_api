@@ -154,7 +154,7 @@
                 "me"
               ]
             },
-            "description": "Trả thông tin user và agent (nếu có). agent.requires_mobile_welcome=true khi đại lý chưa xác nhận popup chào mừng lần đầu trên app."
+            "description": "Trả thông tin user và agent (nếu có). agent.requires_mobile_welcome=true khi đại lý chưa xác nhận popup chào mừng lần đầu trên app. agent.agent_type lấy từ agent_types (gồm ptth_partner = Đối tác Đồng hành PTTH). Mỗi item agent.agent_commission_policy lấy policy đang active với target_subject agent|both: description (HTML, src ảnh absolute), description_images[], target_subject, target_subject_label, conditions (JSON điều kiện/eligible types), tiers, progress. policy_name luôn lấy từ DB (vd VPDD bán hàng trực tiếp)."
           },
           "event": [
             {
@@ -200,6 +200,12 @@
                   "        pm.expect(p).to.have.property('commission_policy_id');",
                   "        pm.expect(p).to.have.property('policy_code');",
                   "        pm.expect(p).to.have.property('policy_name');",
+                  "        pm.expect(p).to.have.property('description');",
+                  "        pm.expect(p).to.have.property('description_images');",
+                  "        pm.expect(p.description_images).to.be.an('array');",
+                  "        pm.expect(p).to.have.property('target_subject');",
+                  "        pm.expect(p).to.have.property('target_subject_label');",
+                  "        pm.expect(p).to.have.property('conditions');",
                   "        pm.expect(p).to.have.property('tiers');",
                   "        pm.expect(p.tiers).to.be.an('array');",
                   "        pm.expect(p).to.have.property('calculation_method');",
