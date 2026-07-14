@@ -18,6 +18,7 @@ use Modules\Order\App\Http\Requests\PreviewOrderRequest;
 use Modules\Order\App\Http\Requests\StoreOrderRequest;
 use Modules\Order\App\Http\Requests\UpdateOrderRequest;
 use Modules\Order\App\Services\AgentMonthlyBonusService;
+use Modules\Order\App\Services\AgentPartnershipCommissionService;
 use Modules\Order\App\Services\OrderPricingService;
 use Modules\Order\App\Services\ProductUnitConverter;
 use Modules\Order\Enums\OrderStatus;
@@ -41,6 +42,7 @@ class OrderController extends BaseApiController
     public function __construct(
         private readonly OrderPricingService $orderPricingService,
         private readonly AgentMonthlyBonusService $agentMonthlyBonusService,
+        private readonly AgentPartnershipCommissionService $agentPartnershipCommissionService,
     ) {
     }
 
@@ -681,7 +683,9 @@ class OrderController extends BaseApiController
                 return $order->fresh(['shippingAddress', 'latestShipment', 'items']);
             });
             $this->notifyDirectEmployeeAboutNewAgentOrder($order);
-            $this->agentMonthlyBonusService->syncForOrder($order->fresh(['items']));
+            $fresh = $order->fresh(['items']);
+            $this->agentMonthlyBonusService->syncForOrder($fresh);
+            $this->agentPartnershipCommissionService->syncForOrder($fresh);
 
             return $this->createdResponse('api.order.store_success', array_merge(
                 [
@@ -744,7 +748,9 @@ class OrderController extends BaseApiController
         $order->refresh()->load(['shippingAddress', 'latestShipment', 'items']);
 
         if ($previousStatus !== $newStatus) {
-            $this->agentMonthlyBonusService->syncForOrder($order->fresh(['items']));
+            $fresh = $order->fresh(['items']);
+            $this->agentMonthlyBonusService->syncForOrder($fresh);
+            $this->agentPartnershipCommissionService->syncForOrder($fresh);
         }
 
         return $this->successResponse('api.order.update_success', [
@@ -839,7 +845,9 @@ class OrderController extends BaseApiController
             return $this->errorResponse('api.errors.unexpected', 500, (object) []);
         }
         $targetOrder->refresh();
-        $this->agentMonthlyBonusService->syncForOrder($targetOrder->fresh(['items']));
+        $fresh = $targetOrder->fresh(['items']);
+        $this->agentMonthlyBonusService->syncForOrder($fresh);
+        $this->agentPartnershipCommissionService->syncForOrder($fresh);
         $this->notifyDirectEmployeeAboutCancelledAgentOrder($targetOrder);
 
         return $this->successResponse('api.order.cancel_success', (object) []);
