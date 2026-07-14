@@ -8,7 +8,7 @@ use Modules\Order\Models\Order;
 use Modules\Order\Support\OrderCommissionEligibility;
 
 /**
- * Thưởng peer VP Đại diện: khi CL/TP (principal) bán hàng, Garage/NPP (partner) nhận cố định /thanh.
+ * Thưởng VPDD bán hàng trực tiếp: khi CL/TP (principal) bán hàng, Garage/NPP (partner) nhận cố định /thanh.
  */
 class AgentPartnershipCommissionService
 {

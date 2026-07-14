@@ -178,7 +178,7 @@ class AgentMonthlyBonusService
             ->join('commission_policies as cp', 'cp.id', '=', 'acp.commission_policy_id')
             ->where('acp.agent_profile_id', $agentProfileId)
             ->where('cp.policy_type', 'bonus')
-            ->where('cp.target_subject', 'agent')
+            ->whereIn('cp.target_subject', ['agent', 'both'])
             ->where('cp.is_active', 1);
 
         if (Schema::hasColumn('agent_commission_policy', 'effective_from')

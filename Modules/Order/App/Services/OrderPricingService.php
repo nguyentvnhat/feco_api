@@ -240,7 +240,7 @@ class OrderPricingService
         $q = DB::table('agent_commission_policy as acp')
             ->join('commission_policies as cp', 'cp.id', '=', 'acp.commission_policy_id')
             ->whereIn('cp.policy_type', self::DISCOUNT_POLICY_TYPES)
-            ->where('cp.target_subject', 'agent')
+            ->whereIn('cp.target_subject', ['agent', 'both'])
             ->where('cp.is_active', 1)
             ->whereIn('cp.calculation_base', ['quantity', 'box_count'])
             ->whereIn('cp.reward_type', ['percent', 'fixed_amount']);

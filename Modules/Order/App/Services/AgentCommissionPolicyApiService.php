@@ -40,7 +40,7 @@ class AgentCommissionPolicyApiService
             $meta = $policyMeta->get($policyId);
             $tiers = $tiersByPolicy->get($policyId, collect());
             $calculationBase = (string) ($meta->calculation_base ?? $row->calculation_base ?? 'revenue');
-            $conditions = $this->decodeConditions($meta);
+            $conditions = $this->decodeConditions($meta ?? $row);
             $fixedPerUnit = (bool) data_get($conditions, 'agent_order_discount.fixed_amount_per_unit', false)
                 || ((string) ($meta->reward_type ?? $row->reward_type ?? '') === 'fixed_amount');
                 $calculationMethod = $fixedPerUnit
@@ -67,19 +67,28 @@ class AgentCommissionPolicyApiService
                 ? $this->interpretPolicyTiersProgress((float) $currentValue, $tiers, $calculationBase)
                 : null;
 
+            $rawDescription = $row->description ?? $meta?->description;
+            $description = $this->absolutizeDescriptionHtml(
+                is_string($rawDescription) ? $rawDescription : null
+            );
+            $targetSubject = (string) ($row->target_subject ?? $meta?->target_subject ?? 'agent');
+
             return [
                 'id' => (int) $row->id,
                 'commission_policy_id' => $policyId,
                 'policy_code' => $row->policy_code ?? $meta?->policy_code,
                 'policy_name' => $row->policy_name ?? $meta?->policy_name,
                 'policy_type' => $row->policy_type ?? $meta?->policy_type,
-                'target_subject' => $row->target_subject ?? $meta?->target_subject,
+                'target_subject' => $targetSubject,
+                'target_subject_label' => $this->targetSubjectLabel($targetSubject, $conditions),
                 'calculation_base' => $calculationBase,
                 'reward_type' => $row->reward_type ?? $meta?->reward_type,
                 'period_type' => $meta?->period_type ?? null,
                 'calculation_method' => $calculationMethod,
                 'is_monthly_accumulation' => $isMonthly,
-                'description' => $row->description ?? $meta?->description,
+                'description' => $description,
+                'description_images' => $this->extractDescriptionImages($description),
+                'conditions' => $conditions !== [] ? $conditions : (object) [],
                 'is_active' => isset($row->is_active) ? (bool) $row->is_active : true,
                 'tiers' => $tiers->map(fn ($tier) => [
                     'id' => (int) $tier->id,
@@ -362,5 +371,109 @@ class AgentCommissionPolicyApiService
         }
 
         return [];
+    }
+
+    /**
+     * Đổi src tương đối trong HTML mô tả thành URL tuyệt đối (APP_URL_IMAGE / APP_URL).
+     */
+    private function absolutizeDescriptionHtml(?string $html): ?string
+    {
+        if ($html === null) {
+            return null;
+        }
+
+        $trimmed = trim($html);
+        if ($trimmed === '') {
+            return $trimmed;
+        }
+
+        return (string) preg_replace_callback(
+            '/(<img\b[^>]*\bsrc\s*=\s*)(["\'])([^"\']+)\2/i',
+            function (array $matches): string {
+                $absolute = $this->toAbsoluteAssetUrl($matches[3]);
+
+                return $matches[1].$matches[2].($absolute ?? $matches[3]).$matches[2];
+            },
+            $trimmed
+        );
+    }
+
+    /**
+     * Trích URL ảnh từ HTML mô tả (đã absolute nếu có thể).
+     *
+     * @return list<string>
+     */
+    private function extractDescriptionImages(?string $html): array
+    {
+        if ($html === null || trim($html) === '') {
+            return [];
+        }
+
+        if (! preg_match_all('/<img\b[^>]*\bsrc\s*=\s*(["\'])([^"\']+)\1/i', $html, $matches)) {
+            return [];
+        }
+
+        $urls = [];
+        foreach ($matches[2] as $src) {
+            $absolute = $this->toAbsoluteAssetUrl((string) $src);
+            if ($absolute === null || $absolute === '') {
+                continue;
+            }
+            $urls[$absolute] = $absolute;
+        }
+
+        return array_values($urls);
+    }
+
+    private function toAbsoluteAssetUrl(?string $path): ?string
+    {
+        if ($path === null) {
+            return null;
+        }
+
+        $path = trim(html_entity_decode($path, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+        if ($path === '') {
+            return null;
+        }
+
+        if (filter_var($path, FILTER_VALIDATE_URL)) {
+            return $path;
+        }
+
+        $baseUrl = rtrim((string) (config('app.url_image') ?: config('app.url')), '/');
+        $relative = '/'.ltrim($path, '/');
+
+        if ($baseUrl === '') {
+            return $relative;
+        }
+
+        return $baseUrl.$relative;
+    }
+
+    /**
+     * @param  array<string, mixed>  $conditions
+     */
+    private function targetSubjectLabel(string $targetSubject, array $conditions): string
+    {
+        if ($targetSubject === 'both'
+            || data_get($conditions, 'agent_downline_bonus.eligible_subjects') === ['agent', 'employee']
+            || (is_array(data_get($conditions, 'agent_downline_bonus.eligible_subjects'))
+                && count(array_intersect(
+                    (array) data_get($conditions, 'agent_downline_bonus.eligible_subjects', []),
+                    ['agent', 'employee']
+                )) === 2)
+        ) {
+            $types = (array) data_get($conditions, 'agent_downline_bonus.eligible_agent_types', []);
+            if (in_array('ptth_partner', $types, true) || in_array('distributor', $types, true)) {
+                return 'Nhà Phân Phối / Đối tác Đồng hành PTTH / Nhân sự';
+            }
+
+            return 'Đại lý & Nhân sự';
+        }
+
+        return match ($targetSubject) {
+            'employee' => 'Nhân sự',
+            default => 'Đại lý',
+        };
     }
 }
