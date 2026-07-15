@@ -492,7 +492,10 @@ class AgentCommissionPolicyApiService
 
         return match ($targetSubject) {
             'employee' => 'Nhân sự',
-            default => 'Đại lý',
+            default => (in_array('ptth_partner', (array) data_get($conditions, 'agent_first_order_referral.eligible_agent_types', []), true)
+                || data_get($conditions, 'agent_first_order_referral.first_order_only') === true)
+                ? 'Đối tác Đồng hành PTTH'
+                : 'Đại lý',
         };
     }
 }
