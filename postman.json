@@ -154,7 +154,7 @@
                 "me"
               ]
             },
-            "description": "Trả thông tin user và agent (nếu có). agent.requires_mobile_welcome=true khi đại lý chưa xác nhận popup chào mừng lần đầu trên app. agent.agent_type lấy từ agent_types (gồm ptth_partner = Đối tác Đồng hành PTTH). Mỗi item agent.agent_commission_policy lấy policy đang active với target_subject agent|both: description (HTML, src ảnh absolute), description_images[], target_subject, target_subject_label, conditions (JSON điều kiện/eligible types), tiers, progress. policy_name luôn lấy từ DB (vd VPDD bán hàng trực tiếp)."
+            "description": "Trả thông tin user và agent (nếu có). agent.requires_mobile_welcome=true khi đại lý chưa xác nhận popup chào mừng lần đầu trên app. agent.agent_type lấy từ agent_types (gồm ptth_partner = Đối tác Đồng hành PTTH). Ảnh đại lý trả tương thích gồm logo_path/logo_url/logo (URL tuyệt đối, fallback từ agent_image_paths[0] nếu logo_path trống) và agent_image_paths (mảng URL tuyệt đối). Mỗi item agent.agent_commission_policy lấy policy đang active với target_subject agent|both: description (HTML, src ảnh absolute), description_images[], target_subject, target_subject_label, conditions (JSON điều kiện/eligible types), tiers, progress. policy_name luôn lấy từ DB (vd VPDD bán hàng trực tiếp)."
           },
           "event": [
             {
@@ -188,6 +188,16 @@
                   "        pm.expect(res.data.agent).to.have.property('requires_mobile_welcome');",
                   "        pm.expect(res.data.agent).to.have.property('contract_file_url');",
                   "        pm.expect(res.data.agent).to.have.property('short_contract_file_url');",
+                  "        pm.expect(res.data.agent).to.have.property('logo_path');",
+                  "        pm.expect(res.data.agent).to.have.property('logo_url');",
+                  "        pm.expect(res.data.agent).to.have.property('logo');",
+                  "        pm.expect(res.data.agent).to.have.property('agent_image_paths');",
+                  "        pm.expect(res.data.agent.agent_image_paths).to.be.an('array');",
+                  "        if (res.data.agent.logo_path !== null) {",
+                  "            pm.expect(res.data.agent.logo_path).to.be.a('string');",
+                  "            pm.expect(res.data.agent.logo_url).to.eql(res.data.agent.logo_path);",
+                  "            pm.expect(res.data.agent.logo).to.eql(res.data.agent.logo_path);",
+                  "        }",
                   "        pm.expect(res.data.agent.month_revenue).to.be.a('string');",
                   "        pm.expect(res.data.agent.month_commission).to.be.a('string');",
                   "        pm.expect(res.data.agent.has_agent_children).to.be.a('boolean');",
@@ -1241,7 +1251,7 @@
                 "children"
               ]
             },
-            "description": "Agents where parent_agent_id = logged-in user's agent id. Optional: ?agent_type_id= to filter by child agent_type_id."
+            "description": "Agents where parent_agent_id = logged-in user's agent id. Optional: ?agent_type_id= to filter by child agent_type_id. Ảnh đại lý trả tương thích gồm logo_path/logo_url/logo (URL tuyệt đối, fallback từ agent_image_paths[0] nếu logo_path trống) và agent_image_paths (mảng URL tuyệt đối)."
           },
           "event": [
             {
@@ -1266,6 +1276,15 @@
                   "    pm.expect(res.data.agents).to.be.an('array');",
                   "    if (res.data.agents.length > 0) {",
                   "        pm.expect(res.data.agents[0]).to.have.property('latest_order_at');",
+                  "        pm.expect(res.data.agents[0]).to.have.property('logo_path');",
+                  "        pm.expect(res.data.agents[0]).to.have.property('logo_url');",
+                  "        pm.expect(res.data.agents[0]).to.have.property('logo');",
+                  "        pm.expect(res.data.agents[0]).to.have.property('agent_image_paths');",
+                  "        pm.expect(res.data.agents[0].agent_image_paths).to.be.an('array');",
+                  "        if (res.data.agents[0].logo_path !== null) {",
+                  "            pm.expect(res.data.agents[0].logo_url).to.eql(res.data.agents[0].logo_path);",
+                  "            pm.expect(res.data.agents[0].logo).to.eql(res.data.agents[0].logo_path);",
+                  "        }",
                   "    }",
                   "});"
                 ]

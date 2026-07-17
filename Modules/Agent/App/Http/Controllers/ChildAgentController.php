@@ -49,14 +49,22 @@ class ChildAgentController extends BaseApiController
                 'user_id',
                 'parent_agent_id',
                 'agent_type_id',
+                'logo_path',
+                'agent_image_paths',
                 'created_at',
                 'updated_at',
             ])
             ->map(function (Agent $agent) {
                 $summary = $this->getOrderSummaryByAgent($agent);
+                $logoUrl = $this->resolveAgentLogoUrl($agent);
+                $imageUrls = $this->resolveAgentImageUrls($agent);
 
                 return array_merge($agent->toArray(), [
                     'full_address' => $this->buildAgentFullAddress($agent),
+                    'logo_path' => $logoUrl,
+                    'logo_url' => $logoUrl,
+                    'logo' => $logoUrl,
+                    'agent_image_paths' => $imageUrls,
                     'order_sold_count' => $summary['order_sold_count'],
                     'total_revenue' => $this->formatVietnameseMoney($summary['total_revenue']),
                     'latest_order_at' => $summary['latest_order_at'],
@@ -121,5 +129,79 @@ class ChildAgentController extends BaseApiController
         }
 
         return trim((string) ($agent->region ?? ''));
+    }
+
+    private function resolveAgentLogoUrl(Agent $agent): ?string
+    {
+        $logoPath = trim((string) ($agent->logo_path ?? ''));
+        if ($logoPath !== '') {
+            return $this->buildAbsoluteAssetUrl($logoPath);
+        }
+
+        $imagePaths = $this->parseAgentImagePaths($agent->agent_image_paths ?? null);
+        if ($imagePaths === []) {
+            return null;
+        }
+
+        return $this->buildAbsoluteAssetUrl($imagePaths[0]);
+    }
+
+    /**
+     * @return string[]
+     */
+    private function resolveAgentImageUrls(Agent $agent): array
+    {
+        return array_values(array_filter(
+            array_map(
+                fn (string $path): ?string => $this->buildAbsoluteAssetUrl($path),
+                $this->parseAgentImagePaths($agent->agent_image_paths ?? null)
+            ),
+            fn (?string $path): bool => $path !== null
+        ));
+    }
+
+    /**
+     * @return string[]
+     */
+    private function parseAgentImagePaths(mixed $raw): array
+    {
+        if (is_string($raw)) {
+            $decoded = json_decode($raw, true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                $raw = $decoded;
+            } else {
+                $raw = [$raw];
+            }
+        }
+
+        if (! is_array($raw)) {
+            return [];
+        }
+
+        return array_values(array_filter(
+            array_map(
+                fn (mixed $path): string => trim((string) $path),
+                $raw
+            ),
+            fn (string $path): bool => $path !== ''
+        ));
+    }
+
+    private function buildAbsoluteAssetUrl(?string $path): ?string
+    {
+        if (! $path) {
+            return null;
+        }
+
+        if (filter_var($path, FILTER_VALIDATE_URL)) {
+            return $path;
+        }
+
+        $baseUrl = rtrim((string) (config('app.url_image') ?: config('app.url')), '/');
+        if ($baseUrl === '') {
+            return '/'.ltrim($path, '/');
+        }
+
+        return $baseUrl.'/'.ltrim($path, '/');
     }
 }

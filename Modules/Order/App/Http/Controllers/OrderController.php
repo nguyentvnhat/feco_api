@@ -5,6 +5,7 @@ namespace Modules\Order\App\Http\Controllers;
 use App\Http\Controllers\BaseApiController;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -598,7 +599,7 @@ class OrderController extends BaseApiController
                 return $this->errorResponse('api.order.agent_code_not_found', 422, (object) []);
             }
 
-            $orderDate = now()->parse($validated['order_date']);
+            $orderDate = $this->parseOrderDateForPersistence((string) $validated['order_date']);
             $addressAttrs = $this->shippingAddressAttributesFromRequest($validated);
             $requestedProducts = collect($validated['products'] ?? [])
                 ->map(fn ($row) => [
@@ -769,7 +770,7 @@ class OrderController extends BaseApiController
 
         OrderCommissionEligibility::assertTransitionAllowed($order, $newStatus);
 
-        $orderDate = now()->parse($validated['order_date']);
+        $orderDate = $this->parseOrderDateForPersistence((string) $validated['order_date']);
         $addressAttrs = $this->shippingAddressAttributesFromRequest($validated);
         $payload = collect($validated)
             ->except([
@@ -1825,6 +1826,22 @@ class OrderController extends BaseApiController
         }
 
         return $row;
+    }
+
+    private function parseOrderDateForPersistence(string $value): Carbon
+    {
+        $value = trim($value);
+        if ($value === '') {
+            return now();
+        }
+
+        $parsed = Carbon::parse($value);
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $value) === 1) {
+            $now = now();
+            return $parsed->setTime($now->hour, $now->minute, $now->second);
+        }
+
+        return $parsed;
     }
 
 }

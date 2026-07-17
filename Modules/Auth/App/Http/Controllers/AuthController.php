@@ -131,6 +131,8 @@ class AuthController extends BaseApiController
         $resolvedWardCode = $agent && $resolvedProvinceCode
             ? $this->resolveAgentWardCode($resolvedProvinceCode, (string) ($agent->ward ?? ''))
             : null;
+        $agentLogoUrl = $agent ? $this->resolveAgentLogoUrl($agent) : null;
+        $agentImageUrls = $agent ? $this->resolveAgentImageUrls($agent) : [];
         $agentProfileId = Schema::hasTable('agent_profiles')
             ? (int) (DB::table('agent_profiles')->where('user_id', $user->id)->value('id') ?? 0)
             : 0;
@@ -151,7 +153,10 @@ class AuthController extends BaseApiController
                 'short_contract_file_url' => $this->buildAbsoluteAssetUrl($agent->short_contract_file_path ?? null),
                 'name' => $agent->name,
                 'business_name' => $agent->business_name,
-                'logo_path' => $this->buildAbsoluteAssetUrl($agent->logo_path ?? null),
+                'logo_path' => $agentLogoUrl,
+                'logo_url' => $agentLogoUrl,
+                'logo' => $agentLogoUrl,
+                'agent_image_paths' => $agentImageUrls,
                 'full_address' => $this->buildAgentFullAddress($agent),
                 'address' => trim((string) ($agent->address ?? '')) ?: null,
                 'city' => trim((string) ($agent->city ?? '')) ?: null,
@@ -406,6 +411,10 @@ class AuthController extends BaseApiController
                 $selects[] = 'agents.logo_path';
             }
 
+            if (Schema::hasColumn('agents', 'agent_image_paths')) {
+                $selects[] = 'agents.agent_image_paths';
+            }
+
             if (Schema::hasColumn('agents', 'contract_code')) {
                 $selects[] = 'agents.contract_code';
             }
@@ -590,6 +599,62 @@ class AuthController extends BaseApiController
         }
 
         return $baseUrl.'/'.ltrim($path, '/');
+    }
+
+    private function resolveAgentLogoUrl(object $agent): ?string
+    {
+        $logoPath = trim((string) ($agent->logo_path ?? ''));
+        if ($logoPath !== '') {
+            return $this->buildAbsoluteAssetUrl($logoPath);
+        }
+
+        $imagePaths = $this->parseAgentImagePaths($agent->agent_image_paths ?? null);
+        if ($imagePaths === []) {
+            return null;
+        }
+
+        return $this->buildAbsoluteAssetUrl($imagePaths[0]);
+    }
+
+    /**
+     * @return string[]
+     */
+    private function resolveAgentImageUrls(object $agent): array
+    {
+        return array_values(array_filter(
+            array_map(
+                fn (string $path): ?string => $this->buildAbsoluteAssetUrl($path),
+                $this->parseAgentImagePaths($agent->agent_image_paths ?? null)
+            ),
+            fn (?string $path): bool => $path !== null
+        ));
+    }
+
+    /**
+     * @return string[]
+     */
+    private function parseAgentImagePaths(mixed $raw): array
+    {
+        if (is_string($raw)) {
+            $decoded = json_decode($raw, true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                $raw = $decoded;
+            } else {
+                $raw = [$raw];
+            }
+        }
+
+        if (! is_array($raw)) {
+            return [];
+        }
+
+        return array_values(array_filter(
+            array_map(
+                fn (mixed $path): string => trim((string) $path),
+                $raw
+            ),
+            fn (string $path): bool => $path !== ''
+        ));
     }
 
     private function agentRequiresMobileWelcome(?object $agent): bool
