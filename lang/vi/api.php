@@ -41,7 +41,10 @@ return [
     'agent' => [
         'children_success' => 'Lấy danh sách đại lý con thành công.',
         'current_agent_not_found' => 'Tài khoản chưa được gắn với đại lý.',
+        'code_exists' => 'Mã đại lý tồn tại.',
+        'code_not_exists' => 'Mã đại lý này không tồn tại, vui lòng kiểm tra lại hoặc liên hệ FECOX3 để được hỗ trợ',
     ],
+
     'setting' => [
         'index_success' => 'Lấy danh sách cấu hình thành công.',
     ],
