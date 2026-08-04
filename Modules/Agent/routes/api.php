@@ -17,10 +17,13 @@ use Modules\Order\App\Http\Controllers\OrderController;
     |
 */
 
+Route::prefix('v1')->name('api.')->group(function () {
+    Route::get('agents/check-code', [AgentCodeController::class, 'check'])->name('agents.check-code');
+});
+
 Route::middleware(['auth:sanctum'])->prefix('v1')->name('api.')->group(function () {
     Route::get('agent', fn (Request $request) => $request->user())->name('agent');
 
-    Route::get('agents/check-code', [AgentCodeController::class, 'check'])->name('agents.check-code');
     Route::get('agents/children', [ChildAgentController::class, 'index'])->name('agents.children');
     Route::get('agents/children/{childAgent}/orders', [OrderController::class, 'childAgentOrders'])->name('agents.children.orders');
 });
