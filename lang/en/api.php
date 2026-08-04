@@ -41,7 +41,10 @@ return [
     'agent' => [
         'children_success' => 'Child agents loaded successfully.',
         'current_agent_not_found' => 'This account is not linked to an agent.',
+        'code_exists' => 'Agent code exists.',
+        'code_not_exists' => 'This agent code does not exist. Please check again or contact FECOX3 for support.',
     ],
+
     'setting' => [
         'index_success' => 'Settings loaded successfully.',
     ],

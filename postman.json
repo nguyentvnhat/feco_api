@@ -1230,6 +1230,77 @@
       },
       "item": [
         {
+          "name": "Check Agent Code",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/agents/check-code?code=AG-STR-001",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "agents",
+                "check-code"
+              ],
+              "query": [
+                {
+                  "key": "code",
+                  "value": "AG-STR-001",
+                  "description": "required | Mã đại lý cần kiểm tra (agents.code, max 32)"
+                }
+              ]
+            },
+            "description": "Kiểm tra mã đại lý có tồn tại trên bảng agents hay không (không phân biệt hoa thường). Trả success=true kèm data.exists, data.code, data.name (tên đại lý), data.agent. Khi tồn tại, data.agent gồm id, code, name, status, agent_type_id, phone."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Check agent code status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var res = pm.response.json();",
+                  "pm.test('Response has common wrapper', function () {",
+                  "    pm.expect(res).to.have.property('success', true);",
+                  "    pm.expect(res).to.have.property('message');",
+                  "    pm.expect(res).to.have.property('data');",
+                  "});",
+                  "",
+                  "pm.test('Has exists flag', function () {",
+                  "    pm.expect(res.data).to.have.property('exists');",
+                  "    pm.expect(res.data.exists).to.be.a('boolean');",
+                  "    pm.expect(res.data).to.have.property('code');",
+                  "    pm.expect(res.data).to.have.property('name');",
+                  "    pm.expect(res.data).to.have.property('agent');",
+                  "    if (res.data.exists === true) {",
+                  "        pm.expect(res.data.name).to.be.a('string');",
+                  "        pm.expect(res.data.agent).to.be.an('object');",
+                  "        pm.expect(res.data.agent).to.have.property('id');",
+                  "        pm.expect(res.data.agent).to.have.property('code');",
+                  "        pm.expect(res.data.agent).to.have.property('name');",
+                  "        pm.expect(res.data.agent).to.have.property('status');",
+                  "    } else {",
+                  "        pm.expect(res.data.name).to.eql(null);",
+                  "        pm.expect(res.data.agent).to.eql(null);",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "List Child Agents",
           "request": {
             "method": "GET",
