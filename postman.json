@@ -842,7 +842,7 @@
                 "preview"
               ]
             },
-            "description": "POST JSON. Không tạo đơn; trả policy, monthly_context, items, applied_tiers, summary (tiền format VND). Bearer bắt buộc; agent_profile lấy từ user đăng nhập."
+            "description": "POST JSON. Không tạo đơn; trả policy, monthly_context, items, policy_tiers (full ladder + tier_name), applied_tiers (bậc đã áp dụng + discount_amount), summary (tiền format VND). Bearer bắt buộc; agent_profile lấy từ user đăng nhập."
           },
           "event": [
             {
@@ -862,8 +862,24 @@
                   "    pm.expect(res.data.summary).to.have.property('discount_amount');",
                   "    pm.expect(res.data.summary).to.have.property('net_amount');",
                   "    pm.expect(res.data).to.have.property('items');",
+                  "    pm.expect(res.data).to.have.property('policy_tiers');",
                   "    pm.expect(res.data).to.have.property('applied_tiers');",
                   "    pm.expect(res.data).to.have.property('monthly_context');",
+                  "});",
+                  "",
+                  "pm.test('policy_tiers items include tier_name when present', function () {",
+                  "    if (Array.isArray(res.data.policy_tiers) && res.data.policy_tiers.length > 0) {",
+                  "        pm.expect(res.data.policy_tiers[0]).to.have.property('tier_name');",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test('applied_tiers items include limit label and discount when present', function () {",
+                  "    if (Array.isArray(res.data.applied_tiers) && res.data.applied_tiers.length > 0) {",
+                  "        pm.expect(res.data.applied_tiers[0]).to.have.property('tier_limit_label');",
+                  "        pm.expect(res.data.applied_tiers[0]).to.have.property('discount_amount');",
+                  "        pm.expect(res.data.applied_tiers[0]).to.have.property('min_value');",
+                  "        pm.expect(res.data.applied_tiers[0]).to.have.property('max_value');",
+                  "    }",
                   "});"
                 ]
               }
