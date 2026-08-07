@@ -132,7 +132,20 @@ class OrderPricingService
                     $lines
                 ));
 
+        $engineResult['breakdowns'] = $this->enrichBreakdownsWithTierNames(
+            $engineResult['breakdowns'] ?? [],
+            $tiers,
+            (string) ($policy->calculation_base ?? 'quantity'),
+            (string) ($policy->policy_name ?? ''),
+        );
+
         $policyPayload = $this->formatPolicyPayload($policy, $calculationMethod, $isMonthly && ! $fixedPerUnit);
+        $policyTiers = $this->formatPolicyTiersForApi(
+            $tiers,
+            (string) ($policy->calculation_base ?? 'quantity'),
+            (string) ($policy->policy_name ?? ''),
+            (int) $policy->id,
+        );
 
         return [
             'policy' => $policyPayload,
@@ -146,6 +159,7 @@ class OrderPricingService
                 'eligible_order_statuses' => $eligibleStatuses,
             ],
             'items' => $this->formatLineItems($lines),
+            'policy_tiers' => $policyTiers,
             'applied_tiers' => $this->formatAppliedTiersForApi($engineResult['breakdowns']),
             'breakdown_rows' => $this->formatBreakdownRowsForDb($engineResult['breakdowns']),
             'summary' => $this->summaryWithVat(
@@ -359,6 +373,131 @@ class OrderPricingService
 
     /**
      * @param  list<array<string, mixed>>  $breakdowns
+     * @param  list<array{id:int,min_value:?string,max_value:?string,reward_percent:?string,reward_amount:?string}>  $tiers
+     * @return list<array<string, mixed>>
+     */
+    private function enrichBreakdownsWithTierNames(
+        array $breakdowns,
+        array $tiers,
+        string $calculationBase,
+        string $policyName,
+    ): array {
+        $tiersById = [];
+        foreach ($tiers as $tier) {
+            $tiersById[(int) $tier['id']] = $tier;
+        }
+
+        return array_map(function (array $row) use ($tiersById, $calculationBase, $policyName) {
+            $tierId = (int) ($row['commission_policy_tier_id'] ?? 0);
+            $tier = $tiersById[$tierId] ?? null;
+            $tierName = $tier !== null
+                ? $this->formatTierName($tier, $calculationBase, $policyName)
+                : null;
+            $tierLimitLabel = $tier !== null
+                ? $this->formatTierLimitLabel($tier, $calculationBase)
+                : null;
+
+            $snapshot = is_array($row['snapshot_json'] ?? null) ? $row['snapshot_json'] : [];
+            if ($tierName !== null && $tierName !== '') {
+                $snapshot['tier_name'] = $tierName;
+            }
+            if ($tierLimitLabel !== null && $tierLimitLabel !== '') {
+                $snapshot['tier_limit_label'] = $tierLimitLabel;
+            }
+            if ($tier !== null) {
+                $snapshot['tier_min_value'] = $tier['min_value'];
+                $snapshot['tier_max_value'] = $tier['max_value'];
+            }
+
+            $row['tier_name'] = $tierName;
+            $row['tier_limit_label'] = $tierLimitLabel;
+            $row['min_value'] = $tier['min_value'] ?? ($snapshot['tier_min'] ?? null);
+            $row['max_value'] = $tier['max_value'] ?? ($snapshot['tier_max'] ?? null);
+            $row['snapshot_json'] = $snapshot;
+
+            return $row;
+        }, $breakdowns);
+    }
+
+    /**
+     * @param  list<array{id:int,min_value:?string,max_value:?string,reward_percent:?string,reward_amount:?string}>  $tiers
+     * @return list<array<string, mixed>>
+     */
+    private function formatPolicyTiersForApi(
+        array $tiers,
+        string $calculationBase,
+        string $policyName,
+        int $policyId,
+    ): array {
+        return array_map(function (array $tier) use ($calculationBase, $policyName, $policyId) {
+            return [
+                'commission_policy_id' => $policyId,
+                'commission_policy_tier_id' => (int) $tier['id'],
+                'tier_name' => $this->formatTierName($tier, $calculationBase, $policyName),
+                'min_value' => $tier['min_value'],
+                'max_value' => $tier['max_value'],
+                'reward_percent' => $tier['reward_percent'],
+                'reward_amount' => $tier['reward_amount'],
+            ];
+        }, $tiers);
+    }
+
+    /**
+     * @param  array{min_value:?string,max_value:?string,reward_percent:?string,reward_amount:?string}  $tier
+     */
+    private function formatTierLimitLabel(array $tier, string $calculationBase): string
+    {
+        $decimals = match ($calculationBase) {
+            'quantity', 'box_count' => 2,
+            default => 0,
+        };
+        $fmt = static function ($value) use ($decimals): string {
+            $formatted = number_format((float) $value, $decimals, ',', '.');
+            if ($decimals > 0) {
+                $formatted = rtrim(rtrim($formatted, '0'), ',');
+            }
+
+            return $formatted !== '' ? $formatted : '0';
+        };
+
+        $min = $fmt($tier['min_value'] ?? 0);
+        $max = isset($tier['max_value']) && $tier['max_value'] !== null && $tier['max_value'] !== ''
+            ? $fmt($tier['max_value'])
+            : '∞';
+        $range = $min.' → '.$max;
+
+        if (isset($tier['reward_percent']) && (float) $tier['reward_percent'] > 0) {
+            $percent = (float) $tier['reward_percent'];
+            $percentLabel = abs($percent - round($percent)) < 0.00001
+                ? (string) (int) round($percent)
+                : rtrim(rtrim(number_format($percent, 2, ',', '.'), '0'), ',');
+
+            return $range.' ('.$percentLabel.'%)';
+        }
+
+        if (isset($tier['reward_amount']) && (float) $tier['reward_amount'] > 0) {
+            return $range.' ('.number_format((float) $tier['reward_amount'], 0, ',', '.').' đ)';
+        }
+
+        return $range;
+    }
+
+    /**
+     * @param  array{min_value:?string,max_value:?string,reward_percent:?string,reward_amount:?string}  $tier
+     */
+    private function formatTierName(array $tier, string $calculationBase, string $policyName = ''): string
+    {
+        $rangeWithReward = $this->formatTierLimitLabel($tier, $calculationBase);
+        $policyName = trim($policyName);
+        if ($policyName === '') {
+            return $rangeWithReward;
+        }
+
+        return $policyName.' ('.$rangeWithReward.')';
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $breakdowns
      * @return list<array<string, mixed>>
      */
     private function formatAppliedTiersForApi(array $breakdowns): array
@@ -367,10 +506,16 @@ class OrderPricingService
             $snapshot = is_array($row['snapshot_json'] ?? null) ? $row['snapshot_json'] : [];
             $calculationMethod = (string) ($snapshot['calculation_method'] ?? '');
             $rewardAmountPerUnit = $snapshot['reward_amount_per_unit'] ?? null;
+            $tierName = $row['tier_name'] ?? ($snapshot['tier_name'] ?? null);
+            $tierLimitLabel = $row['tier_limit_label'] ?? ($snapshot['tier_limit_label'] ?? null);
 
             return [
                 'commission_policy_id' => $row['commission_policy_id'],
                 'commission_policy_tier_id' => $row['commission_policy_tier_id'],
+                'tier_name' => is_string($tierName) && $tierName !== '' ? $tierName : null,
+                'tier_limit_label' => is_string($tierLimitLabel) && $tierLimitLabel !== '' ? $tierLimitLabel : null,
+                'min_value' => $row['min_value'] ?? ($snapshot['tier_min_value'] ?? ($snapshot['tier_min'] ?? null)),
+                'max_value' => $row['max_value'] ?? ($snapshot['tier_max_value'] ?? ($snapshot['tier_max'] ?? null)),
                 'qty_from' => $row['qty_from'],
                 'qty_to' => $row['qty_to'],
                 'applied_qty' => $row['applied_qty'],
@@ -571,6 +716,7 @@ class OrderPricingService
                 'eligible_order_statuses' => $eligibleStatuses,
             ],
             'items' => $this->formatLineItems($lines),
+            'policy_tiers' => [],
             'applied_tiers' => [],
             'breakdown_rows' => [],
             'summary' => $this->summaryWithVat((float) $subtotalBc, 0.0, (float) $subtotalBc),

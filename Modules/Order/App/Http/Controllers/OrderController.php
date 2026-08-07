@@ -1372,10 +1372,15 @@ class OrderController extends BaseApiController
             $tierSnapshot = is_array($row['snapshot_json'] ?? null) ? $row['snapshot_json'] : [];
             $rewardAmountPerUnit = $tierSnapshot['reward_amount_per_unit'] ?? null;
             $calculationMethod = (string) ($tierSnapshot['calculation_method'] ?? ($snapshot['calculation_method'] ?? ''));
+            $tierName = $row['tier_name'] ?? ($tierSnapshot['tier_name'] ?? null);
+            if (! is_string($tierName) || $tierName === '') {
+                $tierName = $this->buildLegacyTierNameFromSnapshot($row, $tierSnapshot);
+            }
 
             return [
                 'commission_policy_id' => (int) ($row['commission_policy_id'] ?? 0),
                 'commission_policy_tier_id' => (int) ($row['commission_policy_tier_id'] ?? 0),
+                'tier_name' => is_string($tierName) && $tierName !== '' ? $tierName : null,
                 'qty_from' => (string) ($row['qty_from'] ?? ''),
                 'qty_to' => (string) ($row['qty_to'] ?? ''),
                 'applied_qty' => (string) ($row['applied_qty'] ?? ''),
@@ -1391,6 +1396,45 @@ class OrderController extends BaseApiController
     }
 
     /**
+     * Fallback cho đơn cũ chưa lưu tier_name trong snapshot.
+     *
+     * @param  array<string, mixed>  $row
+     * @param  array<string, mixed>  $tierSnapshot
+     */
+    private function buildLegacyTierNameFromSnapshot(array $row, array $tierSnapshot): ?string
+    {
+        $minRaw = $tierSnapshot['tier_min'] ?? null;
+        $maxRaw = $tierSnapshot['tier_max'] ?? null;
+        if ($minRaw === null || $minRaw === '') {
+            return null;
+        }
+
+        $fmt = static function ($value): string {
+            $formatted = number_format((float) $value, 2, ',', '.');
+
+            return rtrim(rtrim($formatted, '0'), ',') ?: '0';
+        };
+
+        $range = $fmt($minRaw).' → '.($maxRaw !== null && $maxRaw !== '' ? $fmt($maxRaw) : '∞');
+        $rewardPercent = $row['reward_percent'] ?? null;
+        if ($rewardPercent !== null && (float) $rewardPercent > 0) {
+            $percent = (float) $rewardPercent;
+            $percentLabel = abs($percent - round($percent)) < 0.00001
+                ? (string) (int) round($percent)
+                : rtrim(rtrim(number_format($percent, 2, ',', '.'), '0'), ',');
+
+            return $range.' ('.$percentLabel.'%)';
+        }
+
+        $rewardAmount = $tierSnapshot['reward_amount_per_unit'] ?? null;
+        if ($rewardAmount !== null && (float) $rewardAmount > 0) {
+            return $range.' ('.number_format((float) $rewardAmount, 0, ',', '.').' đ)';
+        }
+
+        return $range;
+    }
+
+    /**
      * @param  array<string, mixed>  $pricing
      * @return array<string, mixed>
      */
@@ -1402,10 +1446,31 @@ class OrderController extends BaseApiController
             'items' => collect($pricing['items'] ?? [])->map(function (array $row) {
                 return $this->formatPricingLineForApi($row);
             })->values()->all(),
+            'policy_tiers' => collect($pricing['policy_tiers'] ?? [])->map(function (array $t) {
+                return [
+                    'commission_policy_id' => $t['commission_policy_id'] ?? null,
+                    'commission_policy_tier_id' => $t['commission_policy_tier_id'] ?? null,
+                    'tier_name' => isset($t['tier_name']) && is_string($t['tier_name']) && $t['tier_name'] !== ''
+                        ? $t['tier_name']
+                        : null,
+                    'min_value' => $t['min_value'] ?? null,
+                    'max_value' => $t['max_value'] ?? null,
+                    'reward_percent' => $t['reward_percent'] ?? null,
+                    'reward_amount' => $t['reward_amount'] ?? null,
+                ];
+            })->values()->all(),
             'applied_tiers' => collect($pricing['applied_tiers'] ?? [])->map(function (array $t) {
                 return [
                     'commission_policy_id' => $t['commission_policy_id'],
                     'commission_policy_tier_id' => $t['commission_policy_tier_id'],
+                    'tier_name' => isset($t['tier_name']) && is_string($t['tier_name']) && $t['tier_name'] !== ''
+                        ? $t['tier_name']
+                        : null,
+                    'tier_limit_label' => isset($t['tier_limit_label']) && is_string($t['tier_limit_label']) && $t['tier_limit_label'] !== ''
+                        ? $t['tier_limit_label']
+                        : null,
+                    'min_value' => $t['min_value'] ?? null,
+                    'max_value' => $t['max_value'] ?? null,
                     'qty_from' => $t['qty_from'],
                     'qty_to' => $t['qty_to'],
                     'applied_qty' => $t['applied_qty'],
