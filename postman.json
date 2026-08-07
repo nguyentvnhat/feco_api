@@ -746,7 +746,7 @@
           "name": "Show Order",
           "request": {
             "method": "GET",
-            "description": "Trả về đơn gồm subtotal, discount_amount, applied_tiers, net_amount (giá trước VAT), vat_base, vat_rate_percent, vat_amount, total_with_vat. Sản phẩm hiển thị theo đơn vị bán (hộp): quantity + unit_price hộp.",
+            "description": "Trả về đơn gồm subtotal, discount_amount, applied_tiers (tier_limit_label + min/max + discount_amount từng bậc), net_amount (giá trước VAT), vat_base, vat_rate_percent, vat_amount, total_with_vat. Sản phẩm hiển thị theo đơn vị bán (hộp): quantity + unit_price hộp.",
             "header": [
               {
                 "key": "Accept",
@@ -792,6 +792,15 @@
                   "    pm.expect(res.data.discount_amount).to.be.a('string');",
                   "    pm.expect(res.data).to.have.property('applied_tiers');",
                   "    pm.expect(res.data.applied_tiers).to.be.an('array');",
+                  "});",
+                  "",
+                  "pm.test('applied_tiers items include limit label when present', function () {",
+                  "    if (Array.isArray(res.data.applied_tiers) && res.data.applied_tiers.length > 0) {",
+                  "        pm.expect(res.data.applied_tiers[0]).to.have.property('tier_limit_label');",
+                  "        pm.expect(res.data.applied_tiers[0]).to.have.property('discount_amount');",
+                  "        pm.expect(res.data.applied_tiers[0]).to.have.property('min_value');",
+                  "        pm.expect(res.data.applied_tiers[0]).to.have.property('max_value');",
+                  "    }",
                   "});",
                   "",
                   "pm.test('Response has VAT breakdown fields', function () {",

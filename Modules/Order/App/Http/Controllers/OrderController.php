@@ -1372,15 +1372,31 @@ class OrderController extends BaseApiController
             $tierSnapshot = is_array($row['snapshot_json'] ?? null) ? $row['snapshot_json'] : [];
             $rewardAmountPerUnit = $tierSnapshot['reward_amount_per_unit'] ?? null;
             $calculationMethod = (string) ($tierSnapshot['calculation_method'] ?? ($snapshot['calculation_method'] ?? ''));
+            $minValue = $row['min_value']
+                ?? ($tierSnapshot['tier_min_value'] ?? ($tierSnapshot['tier_min'] ?? null));
+            $maxValue = $row['max_value']
+                ?? ($tierSnapshot['tier_max_value'] ?? ($tierSnapshot['tier_max'] ?? null));
+
+            $tierLimitLabel = $row['tier_limit_label'] ?? ($tierSnapshot['tier_limit_label'] ?? null);
+            if (! is_string($tierLimitLabel) || $tierLimitLabel === '') {
+                $tierLimitLabel = $this->buildLegacyTierLimitLabelFromSnapshot($row, $tierSnapshot, $minValue, $maxValue);
+            }
+
             $tierName = $row['tier_name'] ?? ($tierSnapshot['tier_name'] ?? null);
             if (! is_string($tierName) || $tierName === '') {
-                $tierName = $this->buildLegacyTierNameFromSnapshot($row, $tierSnapshot);
+                $policyName = trim((string) ($snapshot['policy_name'] ?? ''));
+                $tierName = is_string($tierLimitLabel) && $tierLimitLabel !== ''
+                    ? ($policyName !== '' ? $policyName.' ('.$tierLimitLabel.')' : $tierLimitLabel)
+                    : null;
             }
 
             return [
                 'commission_policy_id' => (int) ($row['commission_policy_id'] ?? 0),
                 'commission_policy_tier_id' => (int) ($row['commission_policy_tier_id'] ?? 0),
                 'tier_name' => is_string($tierName) && $tierName !== '' ? $tierName : null,
+                'tier_limit_label' => is_string($tierLimitLabel) && $tierLimitLabel !== '' ? $tierLimitLabel : null,
+                'min_value' => $minValue !== null && $minValue !== '' ? (string) $minValue : null,
+                'max_value' => $maxValue !== null && $maxValue !== '' ? (string) $maxValue : null,
                 'qty_from' => (string) ($row['qty_from'] ?? ''),
                 'qty_to' => (string) ($row['qty_to'] ?? ''),
                 'applied_qty' => (string) ($row['applied_qty'] ?? ''),
@@ -1396,15 +1412,19 @@ class OrderController extends BaseApiController
     }
 
     /**
-     * Fallback cho đơn cũ chưa lưu tier_name trong snapshot.
+     * Fallback hạn mức bậc cho đơn cũ chưa lưu tier_limit_label.
      *
      * @param  array<string, mixed>  $row
      * @param  array<string, mixed>  $tierSnapshot
      */
-    private function buildLegacyTierNameFromSnapshot(array $row, array $tierSnapshot): ?string
-    {
-        $minRaw = $tierSnapshot['tier_min'] ?? null;
-        $maxRaw = $tierSnapshot['tier_max'] ?? null;
+    private function buildLegacyTierLimitLabelFromSnapshot(
+        array $row,
+        array $tierSnapshot,
+        mixed $minRaw = null,
+        mixed $maxRaw = null,
+    ): ?string {
+        $minRaw = $minRaw ?? ($tierSnapshot['tier_min'] ?? null);
+        $maxRaw = $maxRaw ?? ($tierSnapshot['tier_max'] ?? null);
         if ($minRaw === null || $minRaw === '') {
             return null;
         }
@@ -1434,6 +1454,16 @@ class OrderController extends BaseApiController
         return $range;
     }
 
+    /**
+     * Fallback cho đơn cũ chưa lưu tier_name trong snapshot.
+     *
+     * @param  array<string, mixed>  $row
+     * @param  array<string, mixed>  $tierSnapshot
+     */
+    private function buildLegacyTierNameFromSnapshot(array $row, array $tierSnapshot): ?string
+    {
+        return $this->buildLegacyTierLimitLabelFromSnapshot($row, $tierSnapshot);
+    }
     /**
      * @param  array<string, mixed>  $pricing
      * @return array<string, mixed>
